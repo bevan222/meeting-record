@@ -9,6 +9,7 @@ struct MeetingDetailView: View {
     let livePreviewSegments: [TranscriptSegment]
     let livePreviewWarning: String?
     let isLivePreviewUpdating: Bool
+    let activeRecordingMeetingId: String?
     let onRecord: () -> Void
     let onStop: () -> Void
     let onMeetingMetadataChanged: () -> Void
@@ -28,7 +29,7 @@ struct MeetingDetailView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         header(document)
                         Divider()
-                        if shouldShowLivePreview(for: document) {
+                        if isLivePreviewDocument(document) {
                             VStack(alignment: .leading, spacing: 0) {
                                 HStack(spacing: 6) {
                                     Text("暫定逐字稿")
@@ -60,7 +61,7 @@ struct MeetingDetailView: View {
                         Divider()
                         speakerEditor(document)
                         Divider()
-                        footer
+                        footer(document)
                     }
                 } else {
                     ContentUnavailableView(
@@ -74,8 +75,13 @@ struct MeetingDetailView: View {
         }
     }
 
-    private func shouldShowLivePreview(for document: TranscriptDocument) -> Bool {
-        recorder.isRecording && document.meeting.status == .recording && !livePreviewSegments.isEmpty
+    private func isLivePreviewDocument(_ document: TranscriptDocument) -> Bool {
+        isActiveRecordingDocument(document) && !livePreviewSegments.isEmpty
+    }
+
+    private func isActiveRecordingDocument(_ document: TranscriptDocument) -> Bool {
+        recorder.isRecording
+            && document.meeting.id == activeRecordingMeetingId
     }
 
     private func header(_ document: TranscriptDocument) -> some View {
@@ -114,7 +120,7 @@ struct MeetingDetailView: View {
         .padding()
     }
 
-    private var footer: some View {
+    private func footer(_ document: TranscriptDocument) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Button("Export JSON") {
@@ -140,7 +146,7 @@ struct MeetingDetailView: View {
                 Spacer()
             }
 
-            if let livePreviewWarning {
+            if isActiveRecordingDocument(document), let livePreviewWarning {
                 Text(livePreviewWarning)
                     .font(.caption)
                     .foregroundStyle(.orange)

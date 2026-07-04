@@ -58,6 +58,10 @@ final class MeetingListViewModel: ObservableObject {
         livePreviewTask != nil
     }
 
+    var activeRecordingMeetingId: String? {
+        activeRecordingContext?.meetingId
+    }
+
     func reload() {
         do {
             meetings = try repository.listMeetings()

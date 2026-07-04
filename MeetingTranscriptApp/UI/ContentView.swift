@@ -29,6 +29,7 @@ private struct ContentBody: View {
                 livePreviewSegments: listViewModel.livePreviewSegments,
                 livePreviewWarning: listViewModel.livePreviewWarning,
                 isLivePreviewUpdating: listViewModel.isLivePreviewUpdating,
+                activeRecordingMeetingId: listViewModel.activeRecordingMeetingId,
                 onRecord: { listViewModel.startRecording(container: container) },
                 onStop: { listViewModel.stopRecording(container: container) },
                 onMeetingMetadataChanged: { listViewModel.reload() }
