@@ -38,5 +38,7 @@ for _ in 1 2 3 4 5; do
     xattr -d com.apple.FinderInfo "$APP_DIR" 2>/dev/null || true
 done
 
+codesign --verify --deep --strict --verbose=4 "$APP_DIR"
+
 echo "Built app: $REPO_ROOT/$APP_DIR"
 echo "Open with: open $APP_DIR"

@@ -89,31 +89,26 @@ final class MeetingListViewModel: ObservableObject {
                     title: title,
                     language: "zh-TW"
                 )
-                let placeholder = TranscriptDocument(
-                    meeting: Meeting(
-                        id: recordingContext.meetingId,
-                        title: recordingContext.title,
-                        recordedAt: recordingContext.startedAt,
-                        durationSeconds: 0,
-                        language: recordingContext.language,
-                        sourceAudio: recordingContext.audioURL.lastPathComponent,
-                        status: .recording
-                    ),
-                    speakers: [],
-                    segments: []
-                )
+                await recorder.startRecording(to: recordingContext.audioURL, requestPermissionIfNeeded: false)
+                guard recorder.isRecording else {
+                    try? FileManager.default.removeItem(at: meetingDirectory)
+                    if case .failed(let message) = recorder.state {
+                        errorMessage = message
+                    } else {
+                        errorMessage = recorderFailureMessage
+                    }
+                    return
+                }
 
-                try repository.save(placeholder)
                 activeRecordingContext = recordingContext
+                try repository.save(recordingPreviewDocument(for: recordingContext))
                 selectedMeetingId = recordingContext.meetingId
                 reload()
                 container.meetingDetailViewModel.load(meetingId: recordingContext.meetingId)
-
-                await recorder.startRecording(to: recordingContext.audioURL, requestPermissionIfNeeded: false)
-                if case .failed(let message) = recorder.state {
-                    await markActiveRecordingFailed(container: container, measuredDuration: recorder.elapsedSeconds, message: message)
-                }
             } catch {
+                if recorder.isRecording {
+                    _ = await recorder.stopRecording()
+                }
                 activeRecordingContext = nil
                 errorMessage = error.localizedDescription
             }
@@ -140,6 +135,8 @@ final class MeetingListViewModel: ObservableObject {
                 document.meeting.durationSeconds = max(elapsedSeconds, recorder.elapsedSeconds)
                 document.meeting.sourceAudio = audioURL.lastPathComponent
                 document.meeting.status = .recorded
+                document.speakers = []
+                document.segments = []
                 try repository.save(document)
                 selectedMeetingId = document.meeting.id
                 reload()
@@ -189,6 +186,22 @@ final class MeetingListViewModel: ObservableObject {
             return message
         }
         return "Recording could not be saved."
+    }
+
+    private func recordingPreviewDocument(for recordingContext: RecordingContext) -> TranscriptDocument {
+        TranscriptDocument(
+            meeting: Meeting(
+                id: recordingContext.meetingId,
+                title: recordingContext.title,
+                recordedAt: recordingContext.startedAt,
+                durationSeconds: 0,
+                language: recordingContext.language,
+                sourceAudio: recordingContext.audioURL.lastPathComponent,
+                status: .recording
+            ),
+            speakers: [],
+            segments: MockTranscriptionEngine.sampleSegments
+        )
     }
 
     private func markActiveRecordingFailed(

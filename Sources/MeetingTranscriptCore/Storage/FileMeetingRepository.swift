@@ -44,9 +44,11 @@ public struct FileMeetingRepository: Sendable {
         let directory = try createMeetingDirectory(meetingId: document.meeting.id)
         let transcriptURL = directory.appendingPathComponent("transcript.json")
         let metadataURL = directory.appendingPathComponent("metadata.json")
+        let markdownURL = directory.appendingPathComponent("transcript.md")
 
         try JSONEncoder.transcriptEncoder.encode(document).write(to: transcriptURL, options: .atomic)
         try JSONEncoder.transcriptEncoder.encode(MeetingMetadata(document: document)).write(to: metadataURL, options: .atomic)
+        try MarkdownTranscriptExporter().export(document).write(to: markdownURL, atomically: true, encoding: .utf8)
     }
 
     public func saveMarkdown(_ markdown: String, meetingId: String) throws {

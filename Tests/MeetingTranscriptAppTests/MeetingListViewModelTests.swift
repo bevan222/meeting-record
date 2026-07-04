@@ -63,7 +63,23 @@ final class MeetingListViewModelTests: XCTestCase {
         XCTAssertEqual(failedDocument.meeting.language, recordingDocument.meeting.language)
         XCTAssertEqual(failedDocument.meeting.sourceAudio, recordingDocument.meeting.sourceAudio)
         XCTAssertEqual(failedDocument.meeting.durationSeconds, 12)
+        XCTAssertFalse(recordingDocument.segments.isEmpty)
         XCTAssertEqual(viewModel.errorMessage, "Stop failed.")
+        XCTAssertTrue(viewModel.canStartRecording)
+    }
+
+    func testStartFailureDoesNotPersistPlaceholderTranscript() async throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let container = AppContainer(repository: repository)
+        let viewModel = container.meetingListViewModel
+        viewModel.recorder = FailingStartRecorder()
+
+        viewModel.startRecording(container: container)
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        XCTAssertEqual(try repository.listMeetings(), [])
+        XCTAssertEqual(viewModel.errorMessage, "Recording could not be started.")
         XCTAssertTrue(viewModel.canStartRecording)
     }
 
@@ -109,6 +125,17 @@ private final class FailingStopRecorder: MacAudioRecorder {
         elapsedSeconds = 12
         state = .failed("Stop failed.")
         return nil
+    }
+}
+
+@MainActor
+private final class FailingStartRecorder: MacAudioRecorder {
+    override func requestPermission() async -> Bool {
+        true
+    }
+
+    override func startRecording(to url: URL, requestPermissionIfNeeded: Bool) async {
+        state = .failed("Recording could not be started.")
     }
 }
 

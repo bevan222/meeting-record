@@ -12,7 +12,23 @@ final class FileMeetingRepositoryTests: XCTestCase {
 
         XCTAssertEqual(loaded, document)
         XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("2026-07-04-1400-tgb-sit/transcript.json").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("2026-07-04-1400-tgb-sit/transcript.md").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("2026-07-04-1400-tgb-sit/metadata.json").path))
+    }
+
+    func testSaveRefreshesMarkdownWhenSpeakerNameChanges() throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        var document = Self.sampleDocument()
+        try repository.save(document)
+
+        document.speakers[0].name = "Gavin"
+        try repository.save(document)
+
+        let markdownURL = root.appendingPathComponent("2026-07-04-1400-tgb-sit/transcript.md")
+        let markdown = try String(contentsOf: markdownURL, encoding: .utf8)
+        XCTAssertTrue(markdown.contains("Gavin：今天先確認 SIT 測試範圍。"))
+        XCTAssertFalse(markdown.contains("Speaker 1：今天先確認 SIT 測試範圍。"))
     }
 
     func testListsMeetingsFromMetadata() throws {
