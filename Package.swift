@@ -8,6 +8,9 @@ let package = Package(
         .library(name: "MeetingTranscriptCore", targets: ["MeetingTranscriptCore"]),
         .executable(name: "MeetingTranscriptApp", targets: ["MeetingTranscriptApp"])
     ],
+    dependencies: [
+        .package(url: "https://github.com/argmaxinc/argmax-oss-swift.git", from: "0.9.0")
+    ],
     targets: [
         .target(
             name: "MeetingTranscriptCore",
@@ -15,7 +18,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "MeetingTranscriptApp",
-            dependencies: ["MeetingTranscriptCore"],
+            dependencies: [
+                "MeetingTranscriptCore",
+                .product(name: "WhisperKit", package: "argmax-oss-swift")
+            ],
             path: "MeetingTranscriptApp",
             exclude: ["Resources/Info.plist", "Resources/MeetingTranscriptApp.entitlements"]
         ),
