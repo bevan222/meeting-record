@@ -52,15 +52,8 @@ struct MeetingDetailView: View {
                 .font(.headline)
 
             ForEach(document.speakers) { speaker in
-                HStack {
-                    Text(speaker.label)
-                        .frame(width: 90, alignment: .leading)
-
-                    TextField("Name", text: Binding(
-                        get: { speaker.name ?? "" },
-                        set: { viewModel.renameSpeaker(speakerId: speaker.id, name: $0) }
-                    ))
-                    .textFieldStyle(.roundedBorder)
+                SpeakerNameRow(speaker: speaker) { name in
+                    viewModel.renameSpeaker(speakerId: speaker.id, name: name)
                 }
             }
         }
@@ -104,5 +97,57 @@ struct MeetingDetailView: View {
             return String(format: "%d:%02d:%02d", hours, minutes, seconds)
         }
         return String(format: "%d:%02d", minutes, seconds)
+    }
+}
+
+private struct SpeakerNameRow: View {
+    let speaker: Speaker
+    let onNameChanged: (String) -> Void
+
+    @State private var text: String
+    @State private var lastCommittedText: String
+    @FocusState private var isTextFocused: Bool
+
+    init(speaker: Speaker, onNameChanged: @escaping (String) -> Void) {
+        let name = speaker.name ?? ""
+
+        self.speaker = speaker
+        self.onNameChanged = onNameChanged
+        self._text = State(initialValue: name)
+        self._lastCommittedText = State(initialValue: name)
+    }
+
+    var body: some View {
+        HStack {
+            Text(speaker.label)
+                .frame(width: 90, alignment: .leading)
+
+            TextField("Name", text: $text)
+                .textFieldStyle(.roundedBorder)
+                .focused($isTextFocused)
+                .onSubmit {
+                    commit()
+                }
+        }
+        .onChange(of: isTextFocused) { oldValue, newValue in
+            if oldValue && !newValue {
+                commit()
+            }
+        }
+        .onChange(of: speaker.name) { _, newValue in
+            let newText = newValue ?? ""
+
+            if !isTextFocused {
+                lastCommittedText = newText
+                text = newText
+            }
+        }
+    }
+
+    private func commit() {
+        guard text != lastCommittedText else { return }
+
+        lastCommittedText = text
+        onNameChanged(text)
     }
 }
