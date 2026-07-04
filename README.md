@@ -1,8 +1,8 @@
 # MeetingTranscriptApp
 
-This first slice is a local-only SwiftUI macOS app for recording a meeting, producing a transcript, assigning mock speaker labels, renaming speakers, and exporting the result. Audio and transcript files stay on the local machine under the app's Application Support directory.
+This is a local-only SwiftUI macOS app for recording a meeting, producing a transcript, assigning speaker labels, renaming speakers, and exporting the result. Audio and transcript files stay on the local machine under the app's Application Support directory.
 
-The current transcription and diarization implementations are mock adapters (`MockTranscriptionEngine` and `MockDiarizationEngine`) behind the core engine ports. Real WhisperKit and SpeakerKit integrations are not wired in this slice.
+After recording stops, the app transcribes the saved `audio.m4a` with WhisperKit through the `WhisperKitTranscriptionEngine` adapter. During recording, the app still shows mock preview segments so the UI is not empty before the final post-recording transcript is ready. Speaker diarization is still backed by `MockDiarizationEngine`; real SpeakerKit integration is the next phase.
 
 ## Build
 
@@ -26,7 +26,17 @@ Then open it:
 open .build/app/MeetingTranscriptApp.app
 ```
 
-The bundle script builds the debug executable, creates `.build/app/MeetingTranscriptApp.app`, copies the app `Info.plist`, and signs the bundle with the included entitlements.
+The bundle script builds the debug executable, creates `.build/app/MeetingTranscriptApp.app`, copies the app `Info.plist`, signs the bundle with the included entitlements, and verifies the signature.
+
+## WhisperKit Runtime
+
+The app uses the Argmax OSS Swift `WhisperKit` product and defaults to the `tiny` model for development speed. The first real transcription may download model files through WhisperKit's model repository before inference runs locally. After the model is cached, transcription runs on device.
+
+The current flow is post-recording:
+
+```text
+Record audio.m4a -> Stop -> WhisperKit transcribes audio.m4a -> save transcript.json/transcript.md
+```
 
 ## Runtime Storage
 
@@ -43,18 +53,20 @@ Each meeting has its own directory containing:
 - `transcript.md`
 - `metadata.json`
 
-`transcript.md` is written when Markdown export is requested. `transcript.json` and `metadata.json` are updated when the transcript is saved or JSON export is requested.
+`transcript.json`, `transcript.md`, and `metadata.json` are updated whenever the transcript is saved. The export buttons force-save the current JSON or Markdown again.
 
 ## Current Limitations
 
-- WhisperKit and SpeakerKit are still represented by ports and mock adapters; real model-backed transcription and diarization are future integration work.
-- `swift test` may require a full Xcode/XCTest toolchain. In this local CommandLineTools environment it can fail with `no such module 'XCTest'`, which is a toolchain limitation rather than an app-specific test failure.
+- Recording-time transcript rows are preview content. The final transcript is produced after Stop.
+- SpeakerKit is not wired yet; speaker labels still come from `MockDiarizationEngine`.
+- There is no model picker UI yet. The default WhisperKit model is `tiny`.
 
 ## Manual MVP Checklist
 
 - Record a short meeting from the app and confirm the meeting appears in the list.
-- Open the meeting and confirm transcript segments are displayed.
-- Confirm mock speaker attribution appears on transcript rows.
+- Open the meeting and confirm preview transcript segments are displayed while recording.
+- Stop recording and confirm WhisperKit replaces the preview with final transcript text.
+- Confirm mock speaker attribution appears on final transcript rows.
 - Rename a speaker and confirm the new name is reflected in the transcript display and saved data.
 - Use JSON export and confirm `transcript.json` is present in the meeting folder.
 - Use Markdown export and confirm `transcript.md` is present in the meeting folder.
