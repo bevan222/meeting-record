@@ -128,6 +128,8 @@ final class MeetingListViewModel: ObservableObject {
         let elapsedSeconds = recorder.elapsedSeconds
 
         Task { @MainActor in
+            clearLivePreview()
+
             guard let audioURL = await recorder.stopRecording() else {
                 await markActiveRecordingFailed(
                     container: container,

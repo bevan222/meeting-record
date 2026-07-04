@@ -277,6 +277,42 @@ final class MeetingListViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.livePreviewSegments, [])
     }
 
+    func testLivePreviewClearsWhenStoppingBeforeWorkflowCompletes() async throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let workflow = BlockingWorkflow()
+        let container = AppContainer(
+            repository: repository,
+            workflow: workflow,
+            livePreviewTranscriber: SucceedingLivePreviewTranscriber()
+        )
+        let recorder = SuccessfulRecorder()
+        let viewModel = container.meetingListViewModel
+        viewModel.recorder = recorder
+
+        viewModel.startRecording(container: container)
+        let recordingDocument = try await waitForTranscript(in: repository) { document in
+            document.meeting.status == .recording
+        }
+
+        await viewModel.runLivePreviewTick(container: container)
+        XCTAssertEqual(viewModel.livePreviewSegments.map(\.text), ["暫定逐字稿"])
+
+        viewModel.stopRecording(container: container)
+        _ = try await waitForTranscript(in: repository) { document in
+            document.meeting.id == recordingDocument.meeting.id && document.meeting.status == .transcribing
+        }
+
+        XCTAssertEqual(viewModel.livePreviewSegments, [])
+        XCTAssertNil(viewModel.livePreviewWarning)
+        XCTAssertFalse(viewModel.isLivePreviewUpdating)
+
+        workflow.complete()
+        _ = try await waitForTranscript(in: repository) { document in
+            document.meeting.id == recordingDocument.meeting.id && document.meeting.status == .speakerAttributed
+        }
+    }
+
     func testLivePreviewSkipsOverlappingTick() async throws {
         let root = try Self.makeTemporaryRoot()
         let repository = FileMeetingRepository(rootDirectory: root)
