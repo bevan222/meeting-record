@@ -27,7 +27,8 @@ private struct ContentBody: View {
                 recorder: listViewModel.recorder,
                 canStartRecording: listViewModel.canStartRecording,
                 onRecord: { listViewModel.startRecording(container: container) },
-                onStop: { listViewModel.stopRecording(container: container) }
+                onStop: { listViewModel.stopRecording(container: container) },
+                onMeetingMetadataChanged: { listViewModel.reload() }
             )
         }
         .onAppear {

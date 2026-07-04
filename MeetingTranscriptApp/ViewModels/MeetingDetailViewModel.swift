@@ -45,6 +45,16 @@ final class MeetingDetailViewModel: ObservableObject {
         save(document)
     }
 
+    @discardableResult
+    func updateMeetingTitle(_ title: String) -> String? {
+        guard var document else { return nil }
+
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        document.meeting.title = trimmedTitle.isEmpty ? "Untitled Meeting" : trimmedTitle
+
+        return save(document) ? document.meeting.title : nil
+    }
+
     func renameSpeaker(speakerId: String, name: String) {
         guard var document else { return }
 
@@ -90,13 +100,16 @@ final class MeetingDetailViewModel: ObservableObject {
         }
     }
 
-    private func save(_ document: TranscriptDocument) {
+    @discardableResult
+    private func save(_ document: TranscriptDocument) -> Bool {
         do {
             try repository.save(document)
             self.document = document
             errorMessage = nil
+            return true
         } catch {
             errorMessage = error.localizedDescription
+            return false
         }
     }
 }

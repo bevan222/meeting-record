@@ -8,6 +8,7 @@ struct MeetingDetailView: View {
     let canStartRecording: Bool
     let onRecord: () -> Void
     let onStop: () -> Void
+    let onMeetingMetadataChanged: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -52,9 +53,13 @@ struct MeetingDetailView: View {
 
     private func header(_ document: TranscriptDocument) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(document.meeting.title)
-                .font(.title2)
-                .fontWeight(.semibold)
+            MeetingTitleField(title: document.meeting.title) { title in
+                let updatedTitle = viewModel.updateMeetingTitle(title)
+                if updatedTitle != nil {
+                    onMeetingMetadataChanged()
+                }
+                return updatedTitle
+            }
             Text("\(document.meeting.language) | \(formatDuration(document.meeting.durationSeconds)) | \(document.meeting.status.rawValue)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -123,6 +128,53 @@ struct MeetingDetailView: View {
             return String(format: "%d:%02d:%02d", hours, minutes, seconds)
         }
         return String(format: "%d:%02d", minutes, seconds)
+    }
+}
+
+private struct MeetingTitleField: View {
+    let title: String
+    let onTitleChanged: (String) -> String?
+
+    @State private var text: String
+    @State private var lastCommittedText: String
+    @FocusState private var isTextFocused: Bool
+
+    init(title: String, onTitleChanged: @escaping (String) -> String?) {
+        self.title = title
+        self.onTitleChanged = onTitleChanged
+        self._text = State(initialValue: title)
+        self._lastCommittedText = State(initialValue: title)
+    }
+
+    var body: some View {
+        TextField("Meeting title", text: $text)
+            .textFieldStyle(.plain)
+            .font(.title2)
+            .fontWeight(.semibold)
+            .focused($isTextFocused)
+            .onSubmit {
+                commit()
+            }
+            .onChange(of: isTextFocused) { oldValue, newValue in
+                if oldValue && !newValue {
+                    commit()
+                }
+            }
+            .onChange(of: title) { _, newValue in
+                guard !isTextFocused else { return }
+
+                lastCommittedText = newValue
+                text = newValue
+            }
+    }
+
+    private func commit() {
+        guard text != lastCommittedText else { return }
+
+        guard let updatedTitle = onTitleChanged(text) else { return }
+
+        lastCommittedText = updatedTitle
+        text = updatedTitle
     }
 }
 
