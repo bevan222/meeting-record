@@ -71,7 +71,11 @@ final class MeetingListViewModelTests: XCTestCase {
     func testStopSuccessPersistsInjectedWorkflowTranscript() async throws {
         let root = try Self.makeTemporaryRoot()
         let repository = FileMeetingRepository(rootDirectory: root)
-        let container = AppContainer(repository: repository, workflow: SucceedingWorkflow())
+        let container = AppContainer(
+            repository: repository,
+            workflow: SucceedingWorkflow(),
+            livePreviewTranscriber: SucceedingLivePreviewTranscriber()
+        )
         let recorder = SuccessfulRecorder()
         let viewModel = container.meetingListViewModel
         viewModel.recorder = recorder
@@ -81,11 +85,15 @@ final class MeetingListViewModelTests: XCTestCase {
             document.meeting.status == .recording
         }
 
+        await viewModel.runLivePreviewTick(container: container)
+        XCTAssertEqual(viewModel.livePreviewSegments.map(\.text), ["暫定逐字稿"])
+
         viewModel.stopRecording(container: container)
         let completedDocument = try await waitForTranscript(in: repository) { document in
             document.meeting.id == recordingDocument.meeting.id && document.meeting.status == .speakerAttributed
         }
 
+        XCTAssertEqual(viewModel.livePreviewSegments, [])
         XCTAssertEqual(completedDocument.segments.map(\.text), ["真實 WhisperKit 逐字稿"])
         XCTAssertEqual(completedDocument.segments[0].speakerId, "speaker_1")
         XCTAssertEqual(container.meetingDetailViewModel.document?.segments.map(\.text), ["真實 WhisperKit 逐字稿"])
