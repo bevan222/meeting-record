@@ -3,9 +3,11 @@ import MeetingTranscriptCore
 import WhisperKit
 
 struct WhisperKitTranscriptionEngine: TranscriptionEngine {
+    static let defaultModel = "large-v3-v20240930_626MB"
+
     private let model: String
 
-    init(model: String = "tiny") {
+    init(model: String = Self.defaultModel) {
         self.model = model
     }
 

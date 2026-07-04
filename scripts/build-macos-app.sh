@@ -6,7 +6,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 cd "$REPO_ROOT"
 
-swift build -c debug
+swift build -c debug ${SWIFT_BUILD_FLAGS:-}
 
 EXECUTABLE=".build/debug/MeetingTranscriptApp"
 APP_DIR=".build/app/MeetingTranscriptApp.app"
@@ -26,6 +26,13 @@ cp "$EXECUTABLE" "$MACOS_DIR/MeetingTranscriptApp"
 cp "$RESOURCES_DIR/Info.plist" "$CONTENTS_DIR/Info.plist"
 
 xattr -cr "$APP_DIR"
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    xattr -d com.apple.FinderInfo "$APP_DIR" 2>/dev/null || true
+    if ! xattr -p com.apple.FinderInfo "$APP_DIR" >/dev/null 2>&1; then
+        break
+    fi
+    sleep 0.3
+done
 
 codesign \
     --force \

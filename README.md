@@ -30,7 +30,7 @@ The bundle script builds the debug executable, creates `.build/app/MeetingTransc
 
 ## WhisperKit Runtime
 
-The app uses the Argmax OSS Swift `WhisperKit` product and defaults to the `tiny` model for development speed. The first real transcription may download model files through WhisperKit's model repository before inference runs locally. After the model is cached, transcription runs on device.
+The app uses the Argmax OSS Swift `WhisperKit` product and defaults to the `large-v3-v20240930_626MB` model for better Chinese transcription quality. The first real transcription may download model files through WhisperKit's model repository before inference runs locally, so the first stop/transcribe action can take longer. After the model is cached, transcription runs on device.
 
 The current flow is post-recording:
 
@@ -59,7 +59,7 @@ Each meeting has its own directory containing:
 
 - Recording-time transcript rows are preview content. The final transcript is produced after Stop.
 - SpeakerKit is not wired yet; speaker labels still come from `MockDiarizationEngine`.
-- There is no model picker UI yet. The default WhisperKit model is `tiny`.
+- There is no model picker UI yet. The default WhisperKit model is `large-v3-v20240930_626MB`.
 
 ## Manual MVP Checklist
 

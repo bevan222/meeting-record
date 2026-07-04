@@ -2,6 +2,10 @@ import XCTest
 @testable import MeetingTranscriptApp
 
 final class WhisperKitSegmentMapperTests: XCTestCase {
+    func testDefaultsToHigherQualityChineseModel() throws {
+        XCTAssertEqual(WhisperKitTranscriptionEngine.defaultModel, "large-v3-v20240930_626MB")
+    }
+
     func testUsesTraditionalChinesePromptForChineseTranscription() throws {
         XCTAssertEqual(
             WhisperKitPrompt.prompt(for: "zh"),
