@@ -29,6 +29,10 @@ final class MeetingListViewModel: ObservableObject {
         subscribeToRecorderChanges()
     }
 
+    deinit {
+        livePreviewTask?.cancel()
+    }
+
     var filteredMeetings: [MeetingMetadata] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else {
@@ -299,7 +303,8 @@ final class MeetingListViewModel: ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 10_000_000_000)
                 guard !Task.isCancelled else { return }
-                await self?.runLivePreviewTick(livePreviewTranscriber: livePreviewTranscriber)
+                guard let self else { return }
+                await self.runLivePreviewTick(livePreviewTranscriber: livePreviewTranscriber)
             }
         }
     }
