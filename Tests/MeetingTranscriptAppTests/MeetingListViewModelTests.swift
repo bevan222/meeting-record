@@ -5,6 +5,21 @@ import XCTest
 
 @MainActor
 final class MeetingListViewModelTests: XCTestCase {
+    func testActiveRecordingContextIsPublishedForRecordingAvailabilityRefresh() throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let viewModel = MeetingListViewModel(repository: repository)
+
+        let publishedContextStorage = Mirror(reflecting: viewModel).children.first { child in
+            child.label == "_activeRecordingContext"
+        }
+
+        XCTAssertNotNil(
+            publishedContextStorage,
+            "activeRecordingContext must be @Published so canStartRecording refreshes after it changes."
+        )
+    }
+
     func testReplacementRecorderStateChangePublishesViewModelChange() async throws {
         let root = try Self.makeTemporaryRoot()
         let repository = FileMeetingRepository(rootDirectory: root)

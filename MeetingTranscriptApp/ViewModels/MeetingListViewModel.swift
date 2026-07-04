@@ -15,7 +15,7 @@ final class MeetingListViewModel: ObservableObject {
     }
 
     private let repository: FileMeetingRepository
-    private var activeRecordingContext: RecordingContext?
+    @Published private var activeRecordingContext: RecordingContext?
     private var recorderChanges: AnyCancellable?
 
     init(repository: FileMeetingRepository) {
