@@ -131,9 +131,10 @@ final class MeetingListViewModel: ObservableObject {
             }
 
             do {
+                let finalizedAudioURL = try finalizeRecordingAudio(from: audioURL, for: recordingContext)
                 var document = try repository.loadTranscript(meetingId: recordingContext.meetingId)
                 document.meeting.durationSeconds = max(elapsedSeconds, recorder.elapsedSeconds)
-                document.meeting.sourceAudio = audioURL.lastPathComponent
+                document.meeting.sourceAudio = finalizedAudioURL.lastPathComponent
                 document.meeting.status = .recorded
                 document.speakers = []
                 document.segments = []
@@ -145,7 +146,7 @@ final class MeetingListViewModel: ObservableObject {
                 do {
                     let completedDocument = try await container.workflow.buildTranscript(
                         for: document.meeting,
-                        audioURL: audioURL
+                        audioURL: finalizedAudioURL
                     )
 
                     try repository.save(completedDocument)
@@ -162,6 +163,19 @@ final class MeetingListViewModel: ObservableObject {
 
             activeRecordingContext = nil
         }
+    }
+
+    private func finalizeRecordingAudio(from recordedAudioURL: URL, for recordingContext: RecordingContext) throws -> URL {
+        let expectedAudioURL = recordingContext.audioURL
+        guard recordedAudioURL.standardizedFileURL.path != expectedAudioURL.standardizedFileURL.path else {
+            return expectedAudioURL
+        }
+
+        if FileManager.default.fileExists(atPath: expectedAudioURL.path) {
+            try FileManager.default.removeItem(at: expectedAudioURL)
+        }
+        try FileManager.default.copyItem(at: recordedAudioURL, to: expectedAudioURL)
+        return expectedAudioURL
     }
 
     private var recorderCanAcceptStart: Bool {

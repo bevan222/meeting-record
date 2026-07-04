@@ -91,6 +91,40 @@ final class MeetingListViewModelTests: XCTestCase {
         XCTAssertEqual(container.meetingDetailViewModel.document?.segments.map(\.text), ["真實 WhisperKit 逐字稿"])
     }
 
+    func testEachSuccessfulRecordingUsesIndependentMeetingFolderAudio() async throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let container = AppContainer(repository: repository, workflow: SucceedingWorkflow())
+        let recorder = SuccessfulRecorder()
+        let viewModel = container.meetingListViewModel
+        viewModel.recorder = recorder
+
+        viewModel.startRecording(container: container)
+        let firstRecordingDocument = try await waitForTranscript(in: repository) { document in
+            document.meeting.status == .recording
+        }
+        viewModel.stopRecording(container: container)
+        let firstCompletedDocument = try await waitForTranscript(in: repository) { document in
+            document.meeting.id == firstRecordingDocument.meeting.id && document.meeting.status == .speakerAttributed
+        }
+
+        viewModel.startRecording(container: container)
+        let secondRecordingDocument = try await waitForTranscript(in: repository) { document in
+            document.meeting.status == .recording && document.meeting.id != firstCompletedDocument.meeting.id
+        }
+        viewModel.stopRecording(container: container)
+        let secondCompletedDocument = try await waitForTranscript(in: repository) { document in
+            document.meeting.id == secondRecordingDocument.meeting.id && document.meeting.status == .speakerAttributed
+        }
+
+        XCTAssertNotEqual(firstCompletedDocument.meeting.id, secondCompletedDocument.meeting.id)
+        for document in [firstCompletedDocument, secondCompletedDocument] {
+            let directory = try repository.meetingDirectory(for: document.meeting.id)
+            XCTAssertEqual(document.meeting.sourceAudio, "audio.m4a")
+            XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent("audio.m4a").path))
+        }
+    }
+
     func testStartFailureDoesNotPersistPlaceholderTranscript() async throws {
         let root = try Self.makeTemporaryRoot()
         let repository = FileMeetingRepository(rootDirectory: root)

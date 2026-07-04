@@ -40,7 +40,7 @@ Record audio.m4a -> Stop -> WhisperKit transcribes audio.m4a -> save transcript.
 
 ## Runtime Storage
 
-Meetings are saved locally in:
+Meetings are saved locally in one independent directory per recording under:
 
 ```text
 ~/Library/Application Support/MeetingTranscriptApp/Meetings
