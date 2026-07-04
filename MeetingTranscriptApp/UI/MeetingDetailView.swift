@@ -1,3 +1,4 @@
+import AppKit
 import MeetingTranscriptCore
 import SwiftUI
 
@@ -77,8 +78,18 @@ struct MeetingDetailView: View {
 
     private var footer: some View {
         HStack {
+            Button("Export JSON") {
+                viewModel.exportJSON()
+            }
+
             Button("Export Markdown") {
                 viewModel.exportMarkdown()
+            }
+
+            Button("Open Folder") {
+                if let url = viewModel.meetingFolderURL() {
+                    NSWorkspace.shared.open(url)
+                }
             }
 
             if let errorMessage = viewModel.errorMessage {

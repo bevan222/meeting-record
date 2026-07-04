@@ -71,6 +71,25 @@ final class MeetingDetailViewModel: ObservableObject {
         }
     }
 
+    func exportJSON() {
+        guard let document else { return }
+
+        save(document)
+    }
+
+    func meetingFolderURL() -> URL? {
+        guard let document else { return nil }
+
+        do {
+            let url = try repository.meetingDirectory(for: document.meeting.id)
+            errorMessage = nil
+            return url
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
     private func save(_ document: TranscriptDocument) {
         do {
             try repository.save(document)
