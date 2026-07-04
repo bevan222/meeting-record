@@ -29,12 +29,13 @@ public struct FileMeetingRepository: Sendable {
         self.rootDirectory = rootDirectory
     }
 
-    public func meetingDirectory(for meetingId: String) -> URL {
-        rootDirectory.appendingPathComponent(meetingId, isDirectory: true)
+    public func meetingDirectory(for meetingId: String) throws -> URL {
+        let storageId = try Self.validatedStorageId(meetingId)
+        return rootDirectory.appendingPathComponent(storageId, isDirectory: true)
     }
 
     public func createMeetingDirectory(meetingId: String) throws -> URL {
-        let directory = meetingDirectory(for: meetingId)
+        let directory = try meetingDirectory(for: meetingId)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
     }
@@ -55,7 +56,7 @@ public struct FileMeetingRepository: Sendable {
     }
 
     public func loadTranscript(meetingId: String) throws -> TranscriptDocument {
-        let url = meetingDirectory(for: meetingId).appendingPathComponent("transcript.json")
+        let url = try meetingDirectory(for: meetingId).appendingPathComponent("transcript.json")
         let data = try Data(contentsOf: url)
         return try JSONDecoder.transcriptDecoder.decode(TranscriptDocument.self, from: data)
     }
@@ -66,17 +67,53 @@ public struct FileMeetingRepository: Sendable {
         }
 
         let directories = try FileManager.default.contentsOfDirectory(at: rootDirectory, includingPropertiesForKeys: [.isDirectoryKey])
-        let metadata = try directories.compactMap { directory -> MeetingMetadata? in
-            let values = try directory.resourceValues(forKeys: [.isDirectoryKey])
-            guard values.isDirectory == true else { return nil }
+        let metadata = directories.compactMap { directory -> MeetingMetadata? in
+            guard (try? directory.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true else { return nil }
 
             let metadataURL = directory.appendingPathComponent("metadata.json")
             guard FileManager.default.fileExists(atPath: metadataURL.path) else { return nil }
 
-            let data = try Data(contentsOf: metadataURL)
-            return try JSONDecoder.transcriptDecoder.decode(MeetingMetadata.self, from: data)
+            guard
+                let data = try? Data(contentsOf: metadataURL),
+                let metadata = try? JSONDecoder.transcriptDecoder.decode(MeetingMetadata.self, from: data),
+                (try? Self.validatedStorageId(metadata.id)) != nil
+            else {
+                return nil
+            }
+            return metadata
         }
 
-        return metadata.sorted { $0.recordedAt > $1.recordedAt }
+        return metadata.sorted { lhs, rhs in
+            if lhs.recordedAt == rhs.recordedAt {
+                return lhs.id < rhs.id
+            }
+            return lhs.recordedAt > rhs.recordedAt
+        }
     }
+
+    private static func validatedStorageId(_ meetingId: String) throws -> String {
+        guard !meetingId.isEmpty,
+              meetingId != ".",
+              meetingId != "..",
+              meetingId.unicodeScalars.allSatisfy(Self.isAllowedStorageIDScalar)
+        else {
+            throw FileMeetingRepositoryError.invalidMeetingId(meetingId)
+        }
+        return meetingId
+    }
+
+    private static func isAllowedStorageIDScalar(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.value {
+        case 48...57, 65...90, 97...122:
+            return true
+        case 45, 95:
+            return true
+        default:
+            return false
+        }
+    }
+}
+
+public enum FileMeetingRepositoryError: Error, Equatable, Sendable {
+    case invalidMeetingId(String)
 }
