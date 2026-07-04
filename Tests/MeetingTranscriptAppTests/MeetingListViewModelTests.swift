@@ -1,9 +1,29 @@
+import Combine
 import XCTest
 @testable import MeetingTranscriptApp
 @testable import MeetingTranscriptCore
 
 @MainActor
 final class MeetingListViewModelTests: XCTestCase {
+    func testReplacementRecorderStateChangePublishesViewModelChange() async throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let viewModel = MeetingListViewModel(repository: repository)
+        let recorder = FailingStopRecorder()
+        viewModel.recorder = recorder
+
+        let viewModelChanged = expectation(description: "View model publishes when recorder changes")
+        var cancellable: AnyCancellable?
+        cancellable = viewModel.objectWillChange.sink {
+            viewModelChanged.fulfill()
+        }
+
+        recorder.state = .failed("Delegate failed.")
+
+        await fulfillment(of: [viewModelChanged], timeout: 1)
+        _ = cancellable
+    }
+
     func testStopFailurePersistsFailedDocumentAndAllowsNewRecording() async throws {
         let root = try Self.makeTemporaryRoot()
         let repository = FileMeetingRepository(rootDirectory: root)

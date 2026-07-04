@@ -8,13 +8,19 @@ final class MeetingListViewModel: ObservableObject {
     @Published var selectedMeetingId: String?
     @Published var searchText = ""
     @Published var errorMessage: String?
-    @Published var recorder = MacAudioRecorder()
+    @Published var recorder = MacAudioRecorder() {
+        didSet {
+            subscribeToRecorderChanges()
+        }
+    }
 
     private let repository: FileMeetingRepository
     private var activeRecordingContext: RecordingContext?
+    private var recorderChanges: AnyCancellable?
 
     init(repository: FileMeetingRepository) {
         self.repository = repository
+        subscribeToRecorderChanges()
     }
 
     var filteredMeetings: [MeetingMetadata] {
@@ -167,6 +173,14 @@ final class MeetingListViewModel: ObservableObject {
             return true
         case .checkingPermission, .recording, .stopping:
             return false
+        }
+    }
+
+    private func subscribeToRecorderChanges() {
+        recorderChanges = recorder.objectWillChange.sink { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.objectWillChange.send()
+            }
         }
     }
 
