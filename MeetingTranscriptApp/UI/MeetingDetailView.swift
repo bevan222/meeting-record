@@ -28,7 +28,7 @@ struct MeetingDetailView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         header(document)
                         Divider()
-                        if shouldShowLivePreview {
+                        if shouldShowLivePreview(for: document) {
                             VStack(alignment: .leading, spacing: 0) {
                                 HStack(spacing: 6) {
                                     Text("暫定逐字稿")
@@ -43,11 +43,7 @@ struct MeetingDetailView: View {
                                 .padding(.top, 8)
 
                                 List(livePreviewSegments) { segment in
-                                    TranscriptSegmentRow(
-                                        segment: segment,
-                                        speakerName: "Unknown Speaker",
-                                        onTextChanged: { _ in }
-                                    )
+                                    LivePreviewSegmentRow(segment: segment)
                                 }
                             }
                         } else {
@@ -78,8 +74,8 @@ struct MeetingDetailView: View {
         }
     }
 
-    private var shouldShowLivePreview: Bool {
-        recorder.isRecording && !livePreviewSegments.isEmpty
+    private func shouldShowLivePreview(for document: TranscriptDocument) -> Bool {
+        recorder.isRecording && document.meeting.status == .recording && !livePreviewSegments.isEmpty
     }
 
     private func header(_ document: TranscriptDocument) -> some View {
@@ -119,25 +115,29 @@ struct MeetingDetailView: View {
     }
 
     private var footer: some View {
-        HStack {
-            Button("Export JSON") {
-                viewModel.exportJSON()
-            }
-
-            Button("Export Markdown") {
-                viewModel.exportMarkdown()
-            }
-
-            Button("Open Folder") {
-                if let url = viewModel.meetingFolderURL() {
-                    NSWorkspace.shared.open(url)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Button("Export JSON") {
+                    viewModel.exportJSON()
                 }
-            }
 
-            if let errorMessage = viewModel.errorMessage {
-                Text(errorMessage)
-                    .font(.caption)
-                    .foregroundStyle(.red)
+                Button("Export Markdown") {
+                    viewModel.exportMarkdown()
+                }
+
+                Button("Open Folder") {
+                    if let url = viewModel.meetingFolderURL() {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+
+                if let errorMessage = viewModel.errorMessage {
+                    Text(errorMessage)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+
+                Spacer()
             }
 
             if let livePreviewWarning {
@@ -145,8 +145,6 @@ struct MeetingDetailView: View {
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
-
-            Spacer()
         }
         .padding()
     }
@@ -171,6 +169,38 @@ struct MeetingDetailView: View {
             return String(format: "%d:%02d:%02d", hours, minutes, seconds)
         }
         return String(format: "%d:%02d", minutes, seconds)
+    }
+}
+
+private struct LivePreviewSegmentRow: View {
+    let segment: TranscriptSegment
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text(timestamp(segment.start))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 70, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Unknown Speaker")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+
+                Text(segment.text)
+                    .lineLimit(2...6)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(.vertical, 6)
+    }
+
+    private func timestamp(_ seconds: TimeInterval) -> String {
+        let totalSeconds = max(0, Int(seconds.rounded(.down)))
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let seconds = totalSeconds % 60
+        return String(format: "%02d:%02d:%02d", hours, minutes, seconds)
     }
 }
 
