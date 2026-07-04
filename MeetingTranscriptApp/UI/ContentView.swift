@@ -5,6 +5,7 @@ struct ContentView: View {
 
     var body: some View {
         ContentBody(
+            container: container,
             listViewModel: container.meetingListViewModel,
             detailViewModel: container.meetingDetailViewModel
         )
@@ -12,6 +13,7 @@ struct ContentView: View {
 }
 
 private struct ContentBody: View {
+    let container: AppContainer
     @ObservedObject var listViewModel: MeetingListViewModel
     @ObservedObject var detailViewModel: MeetingDetailViewModel
 
@@ -20,7 +22,13 @@ private struct ContentBody: View {
             MeetingListView(viewModel: listViewModel)
                 .frame(minWidth: 260)
         } detail: {
-            MeetingDetailView(viewModel: detailViewModel)
+            MeetingDetailView(
+                viewModel: detailViewModel,
+                selectedMeetingId: listViewModel.selectedMeetingId,
+                recorder: listViewModel.recorder,
+                onRecord: { listViewModel.startRecording(container: container) },
+                onStop: { listViewModel.stopRecording(container: container) }
+            )
         }
         .onAppear {
             listViewModel.reload()

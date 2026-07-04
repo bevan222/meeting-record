@@ -3,34 +3,51 @@ import SwiftUI
 
 struct MeetingDetailView: View {
     @ObservedObject var viewModel: MeetingDetailViewModel
+    let selectedMeetingId: String?
+    @ObservedObject var recorder: MacAudioRecorder
+    let onRecord: () -> Void
+    let onStop: () -> Void
 
     var body: some View {
-        Group {
-            if let document = viewModel.document {
-                VStack(alignment: .leading, spacing: 0) {
-                    header(document)
-                    Divider()
-                    List(document.segments) { segment in
-                        TranscriptSegmentRow(
-                            segment: segment,
-                            speakerName: speakerName(for: segment, in: document),
-                            onTextChanged: { text in
-                                viewModel.updateSegmentText(segmentId: segment.id, text: text)
-                            }
-                        )
+        VStack(alignment: .leading, spacing: 0) {
+            RecordingToolbarView(
+                recorder: recorder,
+                onRecord: onRecord,
+                onStop: onStop
+            )
+            Divider()
+
+            Group {
+                if let document = viewModel.document {
+                    VStack(alignment: .leading, spacing: 0) {
+                        header(document)
+                        Divider()
+                        List(document.segments) { segment in
+                            TranscriptSegmentRow(
+                                segment: segment,
+                                speakerName: speakerName(for: segment, in: document),
+                                onTextChanged: { text in
+                                    viewModel.updateSegmentText(segmentId: segment.id, text: text)
+                                }
+                            )
+                        }
+                        Divider()
+                        speakerEditor(document)
+                        Divider()
+                        footer
                     }
-                    Divider()
-                    speakerEditor(document)
-                    Divider()
-                    footer
+                } else {
+                    ContentUnavailableView(
+                        "No Meeting Selected",
+                        systemImage: "waveform",
+                        description: Text("Start a recording or select a saved meeting.")
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-            } else {
-                ContentUnavailableView(
-                    "No Meeting Selected",
-                    systemImage: "waveform",
-                    description: Text("Start a recording or select a saved meeting.")
-                )
             }
+        }
+        .onAppear {
+            viewModel.load(meetingId: selectedMeetingId)
         }
     }
 
