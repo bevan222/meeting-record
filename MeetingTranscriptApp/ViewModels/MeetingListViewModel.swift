@@ -107,36 +107,51 @@ final class MeetingListViewModel: ObservableObject {
         guard let recordingContext = activeRecordingContext else { return }
 
         let elapsedSeconds = recorder.elapsedSeconds
-        recorder.stopRecording()
-
-        guard case .saved = recorder.state else {
-            activeRecordingContext = nil
-            return
-        }
 
         Task { @MainActor in
+            guard let audioURL = await recorder.stopRecording() else {
+                activeRecordingContext = nil
+                errorMessage = recorderFailureMessage
+                return
+            }
+
             do {
                 var document = try repository.loadTranscript(meetingId: recordingContext.meetingId)
                 document.meeting.durationSeconds = max(elapsedSeconds, recorder.elapsedSeconds)
-                document.meeting.sourceAudio = recordingContext.audioURL.lastPathComponent
+                document.meeting.sourceAudio = audioURL.lastPathComponent
                 document.meeting.status = .recorded
-
-                let completedDocument = try await container.workflow.buildTranscript(
-                    for: document.meeting,
-                    audioURL: recordingContext.audioURL
-                )
-
-                try repository.save(completedDocument)
-                activeRecordingContext = nil
-                selectedMeetingId = completedDocument.meeting.id
+                try repository.save(document)
+                selectedMeetingId = document.meeting.id
                 reload()
-                container.meetingDetailViewModel.load(meetingId: completedDocument.meeting.id)
-                errorMessage = nil
+                container.meetingDetailViewModel.load(meetingId: document.meeting.id)
+
+                do {
+                    let completedDocument = try await container.workflow.buildTranscript(
+                        for: document.meeting,
+                        audioURL: audioURL
+                    )
+
+                    try repository.save(completedDocument)
+                    selectedMeetingId = completedDocument.meeting.id
+                    reload()
+                    container.meetingDetailViewModel.load(meetingId: completedDocument.meeting.id)
+                    errorMessage = nil
+                } catch {
+                    errorMessage = error.localizedDescription
+                }
             } catch {
-                activeRecordingContext = nil
                 errorMessage = error.localizedDescription
             }
+
+            activeRecordingContext = nil
         }
+    }
+
+    private var recorderFailureMessage: String {
+        if case .failed(let message) = recorder.state {
+            return message
+        }
+        return "Recording could not be saved."
     }
 
     private func makeUniqueMeetingId(date: Date) throws -> String {

@@ -19,6 +19,7 @@ final class MacAudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegat
     private var recorder: AVAudioRecorder?
     private var timer: Timer?
     private var startedAt: Date?
+    private var stopContinuation: CheckedContinuation<URL?, Never>?
 
     var isRecording: Bool {
         if case .recording = state {
@@ -81,25 +82,42 @@ final class MacAudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegat
         }
     }
 
-    func stopRecording() {
-        guard let recorder, isRecording else { return }
+    func stopRecording() async -> URL? {
+        guard let recorder, isRecording else { return nil }
 
         updateElapsed()
         state = .stopping
-        recorder.stop()
         stopTimer()
-        elapsedSeconds = max(elapsedSeconds, recorder.currentTime)
-        state = .saved(recorder.url)
-        self.recorder = nil
-        startedAt = nil
+
+        return await withCheckedContinuation { continuation in
+            stopContinuation = continuation
+            recorder.stop()
+        }
+    }
+
+    nonisolated func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
+        Task { @MainActor in
+            let url = recorder.url
+
+            if flag, isNonEmptyFile(at: url) {
+                completeStop(url: url, errorMessage: nil, recorder: recorder)
+            } else {
+                completeStop(
+                    url: nil,
+                    errorMessage: "Recording could not be saved.",
+                    recorder: recorder
+                )
+            }
+        }
     }
 
     nonisolated func audioRecorderEncodeErrorDidOccur(_ recorder: AVAudioRecorder, error: Error?) {
         Task { @MainActor in
-            stopTimer()
-            self.recorder = nil
-            startedAt = nil
-            state = .failed(error?.localizedDescription ?? "Recording failed.")
+            completeStop(
+                url: nil,
+                errorMessage: error?.localizedDescription ?? "Recording failed.",
+                recorder: recorder
+            )
         }
     }
 
@@ -120,5 +138,33 @@ final class MacAudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegat
     private func updateElapsed() {
         guard let startedAt else { return }
         elapsedSeconds = Date().timeIntervalSince(startedAt)
+    }
+
+    private func completeStop(url: URL?, errorMessage: String?, recorder: AVAudioRecorder) {
+        guard self.recorder === recorder else { return }
+
+        stopTimer()
+        elapsedSeconds = max(elapsedSeconds, recorder.currentTime)
+        self.recorder = nil
+        startedAt = nil
+
+        if let url {
+            state = .saved(url)
+        } else {
+            state = .failed(errorMessage ?? "Recording failed.")
+        }
+
+        stopContinuation?.resume(returning: url)
+        stopContinuation = nil
+    }
+
+    private func isNonEmptyFile(at url: URL) -> Bool {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let fileSize = attributes[.size] as? NSNumber
+        else {
+            return false
+        }
+
+        return fileSize.int64Value > 0
     }
 }
