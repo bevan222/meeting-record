@@ -12,8 +12,17 @@ public struct MeetingWorkflow<T: TranscriptionEngine, D: DiarizationEngine>: Sen
     }
 
     public func buildTranscript(for meeting: Meeting, audioURL: URL) async throws -> TranscriptDocument {
+        try await buildTranscript(for: meeting, audioURL: audioURL, onStatusChange: nil)
+    }
+
+    public func buildTranscript(
+        for meeting: Meeting,
+        audioURL: URL,
+        onStatusChange: (@MainActor @Sendable (MeetingProcessingState) async -> Void)?
+    ) async throws -> TranscriptDocument {
         var transcribingMeeting = meeting
         transcribingMeeting.status = .transcribing
+        await onStatusChange?(.transcribing)
 
         let rawSegments = try await transcriptionEngine.transcribe(
             audioURL: audioURL,
@@ -22,6 +31,7 @@ public struct MeetingWorkflow<T: TranscriptionEngine, D: DiarizationEngine>: Sen
 
         var diarizingMeeting = transcribingMeeting
         diarizingMeeting.status = .diarizing
+        await onStatusChange?(.diarizing)
 
         let turns = try await diarizationEngine.diarize(
             audioURL: audioURL,

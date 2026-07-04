@@ -60,9 +60,15 @@ struct MeetingDetailView: View {
                 }
                 return updatedTitle
             }
-            Text("\(document.meeting.language) | \(formatDuration(document.meeting.durationSeconds)) | \(document.meeting.status.rawValue)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                Text("\(document.meeting.language) | \(formatDuration(document.meeting.durationSeconds)) | \(document.meeting.status.displayText)")
+                if document.meeting.status.isProcessing {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(document.meeting.status.isFailure ? .red : .secondary)
         }
         .padding()
     }

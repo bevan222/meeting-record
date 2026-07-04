@@ -18,9 +18,15 @@ struct MeetingListView: View {
                         Text(meeting.recordedAt.formatted(date: .abbreviated, time: .shortened))
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text(meeting.status.rawValue)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                        HStack(spacing: 5) {
+                            if meeting.status.isProcessing {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
+                            Text(meeting.status.displayText)
+                                .font(.caption2)
+                        }
+                        .foregroundStyle(meeting.status.isFailure ? .red : .secondary)
                     }
                     .tag(meeting.id)
                     .padding(.vertical, 4)

@@ -139,22 +139,32 @@ final class MeetingListViewModel: ObservableObject {
                 document.speakers = []
                 document.segments = []
                 try repository.save(document)
-                selectedMeetingId = document.meeting.id
-                reload()
-                container.meetingDetailViewModel.load(meetingId: document.meeting.id)
+                persist(document, container: container)
 
                 do {
+                    document.meeting.status = .transcribing
+                    try repository.save(document)
+                    persist(document, container: container)
+
                     let completedDocument = try await container.workflow.buildTranscript(
                         for: document.meeting,
-                        audioURL: finalizedAudioURL
+                        audioURL: finalizedAudioURL,
+                        onStatusChange: { state in
+                            document.meeting.status = state
+                            document.speakers = []
+                            document.segments = []
+                            try? self.repository.save(document)
+                            self.persist(document, container: container)
+                        }
                     )
 
                     try repository.save(completedDocument)
-                    selectedMeetingId = completedDocument.meeting.id
-                    reload()
-                    container.meetingDetailViewModel.load(meetingId: completedDocument.meeting.id)
+                    persist(completedDocument, container: container)
                     errorMessage = nil
                 } catch {
+                    document.meeting.status = .failed
+                    try? repository.save(document)
+                    persist(document, container: container)
                     errorMessage = error.localizedDescription
                 }
             } catch {
@@ -163,6 +173,12 @@ final class MeetingListViewModel: ObservableObject {
 
             activeRecordingContext = nil
         }
+    }
+
+    private func persist(_ document: TranscriptDocument, container: AppContainer) {
+        selectedMeetingId = document.meeting.id
+        reload()
+        container.meetingDetailViewModel.load(meetingId: document.meeting.id)
     }
 
     private func finalizeRecordingAudio(from recordedAudioURL: URL, for recordingContext: RecordingContext) throws -> URL {

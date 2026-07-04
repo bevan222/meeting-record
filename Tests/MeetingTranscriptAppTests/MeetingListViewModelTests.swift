@@ -91,6 +91,87 @@ final class MeetingListViewModelTests: XCTestCase {
         XCTAssertEqual(container.meetingDetailViewModel.document?.segments.map(\.text), ["真實 WhisperKit 逐字稿"])
     }
 
+    func testStopPersistsTranscribingStatusWhileWorkflowRuns() async throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let workflow = BlockingWorkflow()
+        let container = AppContainer(repository: repository, workflow: workflow)
+        let recorder = SuccessfulRecorder()
+        let viewModel = container.meetingListViewModel
+        viewModel.recorder = recorder
+
+        viewModel.startRecording(container: container)
+        let recordingDocument = try await waitForTranscript(in: repository) { document in
+            document.meeting.status == .recording
+        }
+
+        viewModel.stopRecording(container: container)
+        let transcribingDocument = try await waitForTranscript(in: repository) { document in
+            document.meeting.id == recordingDocument.meeting.id && document.meeting.status == .transcribing
+        }
+
+        XCTAssertEqual(transcribingDocument.speakers, [])
+        XCTAssertEqual(transcribingDocument.segments, [])
+        XCTAssertFalse(viewModel.canStartRecording)
+
+        workflow.complete()
+        _ = try await waitForTranscript(in: repository) { document in
+            document.meeting.id == recordingDocument.meeting.id && document.meeting.status == .speakerAttributed
+        }
+    }
+
+    func testStopPersistsDiarizingStatusWhileWorkflowRuns() async throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let workflow = DiarizingBlockingWorkflow()
+        let container = AppContainer(repository: repository, workflow: workflow)
+        let recorder = SuccessfulRecorder()
+        let viewModel = container.meetingListViewModel
+        viewModel.recorder = recorder
+
+        viewModel.startRecording(container: container)
+        let recordingDocument = try await waitForTranscript(in: repository) { document in
+            document.meeting.status == .recording
+        }
+
+        viewModel.stopRecording(container: container)
+        let diarizingDocument = try await waitForTranscript(in: repository) { document in
+            document.meeting.id == recordingDocument.meeting.id && document.meeting.status == .diarizing
+        }
+
+        XCTAssertEqual(diarizingDocument.speakers, [])
+        XCTAssertEqual(diarizingDocument.segments, [])
+        XCTAssertFalse(viewModel.canStartRecording)
+
+        workflow.complete()
+        _ = try await waitForTranscript(in: repository) { document in
+            document.meeting.id == recordingDocument.meeting.id && document.meeting.status == .speakerAttributed
+        }
+    }
+
+    func testStopWorkflowFailurePersistsFailedDocumentAndAllowsNewRecording() async throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let container = AppContainer(repository: repository, workflow: FailingWorkflow())
+        let recorder = SuccessfulRecorder()
+        let viewModel = container.meetingListViewModel
+        viewModel.recorder = recorder
+
+        viewModel.startRecording(container: container)
+        let recordingDocument = try await waitForTranscript(in: repository) { document in
+            document.meeting.status == .recording
+        }
+
+        viewModel.stopRecording(container: container)
+        let failedDocument = try await waitForTranscript(in: repository) { document in
+            document.meeting.id == recordingDocument.meeting.id && document.meeting.status == .failed
+        }
+
+        XCTAssertEqual(failedDocument.segments, [])
+        XCTAssertEqual(viewModel.errorMessage, "Workflow failed.")
+        XCTAssertTrue(viewModel.canStartRecording)
+    }
+
     func testEachSuccessfulRecordingUsesIndependentMeetingFolderAudio() async throws {
         let root = try Self.makeTemporaryRoot()
         let repository = FileMeetingRepository(rootDirectory: root)
@@ -221,6 +302,110 @@ private struct SucceedingWorkflow: TranscriptBuilding {
             speakers: [Speaker(id: "speaker_1", label: "Speaker 1", name: nil)],
             segments: [TranscriptSegment(id: "seg_0001", start: 0, end: 3, speakerId: "speaker_1", text: "真實 WhisperKit 逐字稿", confidence: nil)]
         )
+    }
+}
+
+private final class BlockingWorkflow: TranscriptBuilding, @unchecked Sendable {
+    private let lock = NSLock()
+    private var isComplete = false
+
+    func buildTranscript(for meeting: Meeting, audioURL: URL) async throws -> TranscriptDocument {
+        let deadline = Date().addingTimeInterval(5)
+        while !completed {
+            if Date() >= deadline { throw Timeout() }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+
+        return TranscriptDocument(
+            meeting: Meeting(
+                id: meeting.id,
+                title: meeting.title,
+                recordedAt: meeting.recordedAt,
+                durationSeconds: meeting.durationSeconds,
+                language: meeting.language,
+                sourceAudio: audioURL.lastPathComponent,
+                status: .speakerAttributed
+            ),
+            speakers: [Speaker(id: "speaker_1", label: "Speaker 1", name: nil)],
+            segments: [TranscriptSegment(id: "seg_0001", start: 0, end: 3, speakerId: "speaker_1", text: "完成逐字稿", confidence: nil)]
+        )
+    }
+
+    func complete() {
+        lock.lock()
+        isComplete = true
+        lock.unlock()
+    }
+
+    private var completed: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return isComplete
+    }
+
+    private struct Timeout: Error {}
+}
+
+private final class DiarizingBlockingWorkflow: TranscriptBuilding, @unchecked Sendable {
+    private let lock = NSLock()
+    private var isComplete = false
+
+    func buildTranscript(for meeting: Meeting, audioURL: URL) async throws -> TranscriptDocument {
+        try await buildTranscript(for: meeting, audioURL: audioURL, onStatusChange: nil)
+    }
+
+    func buildTranscript(
+        for meeting: Meeting,
+        audioURL: URL,
+        onStatusChange: (@MainActor @Sendable (MeetingProcessingState) async -> Void)?
+    ) async throws -> TranscriptDocument {
+        await onStatusChange?(.diarizing)
+
+        let deadline = Date().addingTimeInterval(5)
+        while !completed {
+            if Date() >= deadline { throw Timeout() }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+
+        return TranscriptDocument(
+            meeting: Meeting(
+                id: meeting.id,
+                title: meeting.title,
+                recordedAt: meeting.recordedAt,
+                durationSeconds: meeting.durationSeconds,
+                language: meeting.language,
+                sourceAudio: audioURL.lastPathComponent,
+                status: .speakerAttributed
+            ),
+            speakers: [Speaker(id: "speaker_1", label: "Speaker 1", name: nil)],
+            segments: [TranscriptSegment(id: "seg_0001", start: 0, end: 3, speakerId: "speaker_1", text: "完成逐字稿", confidence: nil)]
+        )
+    }
+
+    func complete() {
+        lock.lock()
+        isComplete = true
+        lock.unlock()
+    }
+
+    private var completed: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return isComplete
+    }
+
+    private struct Timeout: Error {}
+}
+
+private struct FailingWorkflow: TranscriptBuilding {
+    func buildTranscript(for meeting: Meeting, audioURL: URL) async throws -> TranscriptDocument {
+        throw Failure()
+    }
+
+    private struct Failure: LocalizedError {
+        var errorDescription: String? {
+            "Workflow failed."
+        }
     }
 }
 
