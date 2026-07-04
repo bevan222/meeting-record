@@ -2,7 +2,7 @@ import AVFoundation
 import Foundation
 
 @MainActor
-final class MacAudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
+class MacAudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
     enum State: Equatable {
         case idle
         case checkingPermission
@@ -13,8 +13,8 @@ final class MacAudioRecorder: NSObject, ObservableObject, AVAudioRecorderDelegat
         case failed(String)
     }
 
-    @Published private(set) var state: State = .idle
-    @Published private(set) var elapsedSeconds: TimeInterval = 0
+    @Published var state: State = .idle
+    @Published var elapsedSeconds: TimeInterval = 0
 
     private var recorder: AVAudioRecorder?
     private var timer: Timer?

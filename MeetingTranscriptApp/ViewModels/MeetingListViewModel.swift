@@ -28,6 +28,16 @@ final class MeetingListViewModel: ObservableObject {
         }
     }
 
+    var canStartRecording: Bool {
+        guard recorderCanAcceptStart else { return false }
+        guard activeRecordingContext != nil else { return true }
+
+        if case .failed = recorder.state {
+            return true
+        }
+        return false
+    }
+
     func reload() {
         do {
             meetings = try repository.listMeetings()
@@ -44,7 +54,14 @@ final class MeetingListViewModel: ObservableObject {
 
     func startRecording(container: AppContainer) {
         Task { @MainActor in
-            guard !recorder.isRecording, activeRecordingContext == nil else { return }
+            guard !recorder.isRecording else { return }
+
+            if activeRecordingContext != nil {
+                guard case .failed = recorder.state else { return }
+                await markActiveRecordingFailed(container: container, measuredDuration: recorder.elapsedSeconds)
+            }
+
+            guard activeRecordingContext == nil else { return }
 
             errorMessage = nil
             guard await recorder.requestPermission() else {
@@ -88,13 +105,7 @@ final class MeetingListViewModel: ObservableObject {
 
                 await recorder.startRecording(to: recordingContext.audioURL, requestPermissionIfNeeded: false)
                 if case .failed(let message) = recorder.state {
-                    activeRecordingContext = nil
-                    errorMessage = message
-                    var failedDocument = placeholder
-                    failedDocument.meeting.status = .failed
-                    try? repository.save(failedDocument)
-                    reload()
-                    container.meetingDetailViewModel.load(meetingId: recordingContext.meetingId)
+                    await markActiveRecordingFailed(container: container, measuredDuration: recorder.elapsedSeconds, message: message)
                 }
             } catch {
                 activeRecordingContext = nil
@@ -110,8 +121,11 @@ final class MeetingListViewModel: ObservableObject {
 
         Task { @MainActor in
             guard let audioURL = await recorder.stopRecording() else {
-                activeRecordingContext = nil
-                errorMessage = recorderFailureMessage
+                await markActiveRecordingFailed(
+                    container: container,
+                    measuredDuration: max(elapsedSeconds, recorder.elapsedSeconds),
+                    message: recorderFailureMessage
+                )
                 return
             }
 
@@ -147,11 +161,61 @@ final class MeetingListViewModel: ObservableObject {
         }
     }
 
+    private var recorderCanAcceptStart: Bool {
+        switch recorder.state {
+        case .idle, .permissionDenied, .saved, .failed:
+            return true
+        case .checkingPermission, .recording, .stopping:
+            return false
+        }
+    }
+
     private var recorderFailureMessage: String {
         if case .failed(let message) = recorder.state {
             return message
         }
         return "Recording could not be saved."
+    }
+
+    private func markActiveRecordingFailed(
+        container: AppContainer,
+        measuredDuration: TimeInterval?,
+        message: String? = nil
+    ) async {
+        guard let recordingContext = activeRecordingContext else {
+            errorMessage = message ?? recorderFailureMessage
+            return
+        }
+
+        let duration = measuredDuration ?? recorder.elapsedSeconds
+
+        do {
+            var document = (try? repository.loadTranscript(meetingId: recordingContext.meetingId)) ?? TranscriptDocument(
+                meeting: Meeting(
+                    id: recordingContext.meetingId,
+                    title: recordingContext.title,
+                    recordedAt: recordingContext.startedAt,
+                    durationSeconds: 0,
+                    language: recordingContext.language,
+                    sourceAudio: recordingContext.audioURL.lastPathComponent,
+                    status: .recording
+                ),
+                speakers: [],
+                segments: []
+            )
+
+            document.meeting.durationSeconds = max(0, duration)
+            document.meeting.status = .failed
+            try repository.save(document)
+            selectedMeetingId = document.meeting.id
+            reload()
+            container.meetingDetailViewModel.load(meetingId: document.meeting.id)
+            activeRecordingContext = nil
+            errorMessage = message ?? recorderFailureMessage
+        } catch {
+            activeRecordingContext = nil
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func makeUniqueMeetingId(date: Date) throws -> String {

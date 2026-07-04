@@ -2,10 +2,13 @@ import SwiftUI
 
 struct RecordingToolbarView: View {
     @ObservedObject var recorder: MacAudioRecorder
+    let canStartRecording: Bool
     let onRecord: () -> Void
     let onStop: () -> Void
 
     private var canRecord: Bool {
+        guard canStartRecording else { return false }
+
         switch recorder.state {
         case .idle, .permissionDenied, .saved, .failed:
             return true

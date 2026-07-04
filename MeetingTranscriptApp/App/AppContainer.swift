@@ -12,8 +12,11 @@ final class AppContainer: ObservableObject {
     let meetingListViewModel: MeetingListViewModel
     let meetingDetailViewModel: MeetingDetailViewModel
 
-    init() {
-        let repository = FileMeetingRepository(rootDirectory: AppDirectories.meetingsDirectory())
+    convenience init() {
+        self.init(repository: FileMeetingRepository(rootDirectory: AppDirectories.meetingsDirectory()))
+    }
+
+    init(repository: FileMeetingRepository) {
         let markdownExporter = MarkdownTranscriptExporter()
 
         self.repository = repository

@@ -4,6 +4,7 @@ import SwiftUI
 struct MeetingDetailView: View {
     @ObservedObject var viewModel: MeetingDetailViewModel
     @ObservedObject var recorder: MacAudioRecorder
+    let canStartRecording: Bool
     let onRecord: () -> Void
     let onStop: () -> Void
 
@@ -11,6 +12,7 @@ struct MeetingDetailView: View {
         VStack(alignment: .leading, spacing: 0) {
             RecordingToolbarView(
                 recorder: recorder,
+                canStartRecording: canStartRecording,
                 onRecord: onRecord,
                 onStop: onStop
             )

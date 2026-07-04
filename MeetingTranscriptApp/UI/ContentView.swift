@@ -25,6 +25,7 @@ private struct ContentBody: View {
             MeetingDetailView(
                 viewModel: detailViewModel,
                 recorder: listViewModel.recorder,
+                canStartRecording: listViewModel.canStartRecording,
                 onRecord: { listViewModel.startRecording(container: container) },
                 onStop: { listViewModel.stopRecording(container: container) }
             )

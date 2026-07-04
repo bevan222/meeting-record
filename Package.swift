@@ -23,6 +23,11 @@ let package = Package(
             name: "MeetingTranscriptCoreTests",
             dependencies: ["MeetingTranscriptCore"],
             path: "Tests/MeetingTranscriptCoreTests"
+        ),
+        .testTarget(
+            name: "MeetingTranscriptAppTests",
+            dependencies: ["MeetingTranscriptApp"],
+            path: "Tests/MeetingTranscriptAppTests"
         )
     ]
 )
