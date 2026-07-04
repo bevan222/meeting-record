@@ -6,6 +6,9 @@ struct MeetingDetailView: View {
     @ObservedObject var viewModel: MeetingDetailViewModel
     @ObservedObject var recorder: MacAudioRecorder
     let canStartRecording: Bool
+    let livePreviewSegments: [TranscriptSegment]
+    let livePreviewWarning: String?
+    let isLivePreviewUpdating: Bool
     let onRecord: () -> Void
     let onStop: () -> Void
     let onMeetingMetadataChanged: () -> Void
@@ -25,14 +28,38 @@ struct MeetingDetailView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         header(document)
                         Divider()
-                        List(document.segments) { segment in
-                            TranscriptSegmentRow(
-                                segment: segment,
-                                speakerName: speakerName(for: segment, in: document),
-                                onTextChanged: { text in
-                                    viewModel.updateSegmentText(segmentId: segment.id, text: text)
+                        if shouldShowLivePreview {
+                            VStack(alignment: .leading, spacing: 0) {
+                                HStack(spacing: 6) {
+                                    Text("暫定逐字稿")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    if isLivePreviewUpdating {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                    }
                                 }
-                            )
+                                .padding(.horizontal)
+                                .padding(.top, 8)
+
+                                List(livePreviewSegments) { segment in
+                                    TranscriptSegmentRow(
+                                        segment: segment,
+                                        speakerName: "Unknown Speaker",
+                                        onTextChanged: { _ in }
+                                    )
+                                }
+                            }
+                        } else {
+                            List(document.segments) { segment in
+                                TranscriptSegmentRow(
+                                    segment: segment,
+                                    speakerName: speakerName(for: segment, in: document),
+                                    onTextChanged: { text in
+                                        viewModel.updateSegmentText(segmentId: segment.id, text: text)
+                                    }
+                                )
+                            }
                         }
                         Divider()
                         speakerEditor(document)
@@ -49,6 +76,10 @@ struct MeetingDetailView: View {
                 }
             }
         }
+    }
+
+    private var shouldShowLivePreview: Bool {
+        recorder.isRecording && !livePreviewSegments.isEmpty
     }
 
     private func header(_ document: TranscriptDocument) -> some View {
@@ -107,6 +138,12 @@ struct MeetingDetailView: View {
                 Text(errorMessage)
                     .font(.caption)
                     .foregroundStyle(.red)
+            }
+
+            if let livePreviewWarning {
+                Text(livePreviewWarning)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
             }
 
             Spacer()
