@@ -24,7 +24,6 @@ private struct ContentBody: View {
         } detail: {
             MeetingDetailView(
                 viewModel: detailViewModel,
-                selectedMeetingId: listViewModel.selectedMeetingId,
                 recorder: listViewModel.recorder,
                 onRecord: { listViewModel.startRecording(container: container) },
                 onStop: { listViewModel.stopRecording(container: container) }

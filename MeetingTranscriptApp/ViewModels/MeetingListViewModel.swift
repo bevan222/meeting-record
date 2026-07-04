@@ -11,6 +11,7 @@ final class MeetingListViewModel: ObservableObject {
     @Published var recorder = MacAudioRecorder()
 
     private let repository: FileMeetingRepository
+    private var activeRecordingContext: RecordingContext?
 
     init(repository: FileMeetingRepository) {
         self.repository = repository
@@ -43,7 +44,7 @@ final class MeetingListViewModel: ObservableObject {
 
     func startRecording(container: AppContainer) {
         Task { @MainActor in
-            guard !recorder.isRecording else { return }
+            guard !recorder.isRecording, activeRecordingContext == nil else { return }
 
             errorMessage = nil
             guard await recorder.requestPermission() else {
@@ -58,14 +59,21 @@ final class MeetingListViewModel: ObservableObject {
                 let id = try makeUniqueMeetingId(date: now)
                 let meetingDirectory = try repository.createMeetingDirectory(meetingId: id)
                 let audioURL = meetingDirectory.appendingPathComponent("audio.m4a")
+                let recordingContext = RecordingContext(
+                    meetingId: id,
+                    audioURL: audioURL,
+                    startedAt: now,
+                    title: title,
+                    language: "zh-TW"
+                )
                 let placeholder = TranscriptDocument(
                     meeting: Meeting(
-                        id: id,
-                        title: title,
-                        recordedAt: now,
+                        id: recordingContext.meetingId,
+                        title: recordingContext.title,
+                        recordedAt: recordingContext.startedAt,
                         durationSeconds: 0,
-                        language: "zh-TW",
-                        sourceAudio: "audio.m4a",
+                        language: recordingContext.language,
+                        sourceAudio: recordingContext.audioURL.lastPathComponent,
                         status: .recording
                     ),
                     speakers: [],
@@ -73,51 +81,59 @@ final class MeetingListViewModel: ObservableObject {
                 )
 
                 try repository.save(placeholder)
-                selectedMeetingId = id
+                activeRecordingContext = recordingContext
+                selectedMeetingId = recordingContext.meetingId
                 reload()
-                container.meetingDetailViewModel.load(meetingId: id)
+                container.meetingDetailViewModel.load(meetingId: recordingContext.meetingId)
 
-                await recorder.startRecording(to: audioURL, requestPermissionIfNeeded: false)
+                await recorder.startRecording(to: recordingContext.audioURL, requestPermissionIfNeeded: false)
                 if case .failed(let message) = recorder.state {
+                    activeRecordingContext = nil
                     errorMessage = message
                     var failedDocument = placeholder
                     failedDocument.meeting.status = .failed
                     try? repository.save(failedDocument)
                     reload()
-                    container.meetingDetailViewModel.load(meetingId: id)
+                    container.meetingDetailViewModel.load(meetingId: recordingContext.meetingId)
                 }
             } catch {
+                activeRecordingContext = nil
                 errorMessage = error.localizedDescription
             }
         }
     }
 
     func stopRecording(container: AppContainer) {
+        guard let recordingContext = activeRecordingContext else { return }
+
         let elapsedSeconds = recorder.elapsedSeconds
         recorder.stopRecording()
 
-        guard case .saved(let audioURL) = recorder.state else { return }
+        guard case .saved = recorder.state else {
+            activeRecordingContext = nil
+            return
+        }
 
         Task { @MainActor in
-            let meetingId = selectedMeetingId ?? audioURL.deletingLastPathComponent().lastPathComponent
-
             do {
-                var document = try repository.loadTranscript(meetingId: meetingId)
+                var document = try repository.loadTranscript(meetingId: recordingContext.meetingId)
                 document.meeting.durationSeconds = max(elapsedSeconds, recorder.elapsedSeconds)
-                document.meeting.sourceAudio = audioURL.lastPathComponent
+                document.meeting.sourceAudio = recordingContext.audioURL.lastPathComponent
                 document.meeting.status = .recorded
 
                 let completedDocument = try await container.workflow.buildTranscript(
                     for: document.meeting,
-                    audioURL: audioURL
+                    audioURL: recordingContext.audioURL
                 )
 
                 try repository.save(completedDocument)
+                activeRecordingContext = nil
                 selectedMeetingId = completedDocument.meeting.id
                 reload()
                 container.meetingDetailViewModel.load(meetingId: completedDocument.meeting.id)
                 errorMessage = nil
             } catch {
+                activeRecordingContext = nil
                 errorMessage = error.localizedDescription
             }
         }
@@ -140,4 +156,12 @@ final class MeetingListViewModel: ObservableObject {
 
         return candidate
     }
+}
+
+private struct RecordingContext {
+    let meetingId: String
+    let audioURL: URL
+    let startedAt: Date
+    let title: String
+    let language: String
 }

@@ -3,7 +3,6 @@ import SwiftUI
 
 struct MeetingDetailView: View {
     @ObservedObject var viewModel: MeetingDetailViewModel
-    let selectedMeetingId: String?
     @ObservedObject var recorder: MacAudioRecorder
     let onRecord: () -> Void
     let onStop: () -> Void
@@ -45,9 +44,6 @@ struct MeetingDetailView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-        }
-        .onAppear {
-            viewModel.load(meetingId: selectedMeetingId)
         }
     }
 
