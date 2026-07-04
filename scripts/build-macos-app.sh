@@ -25,11 +25,18 @@ mkdir -p "$MACOS_DIR"
 cp "$EXECUTABLE" "$MACOS_DIR/MeetingTranscriptApp"
 cp "$RESOURCES_DIR/Info.plist" "$CONTENTS_DIR/Info.plist"
 
+xattr -cr "$APP_DIR"
+
 codesign \
     --force \
     --sign - \
     --entitlements "$RESOURCES_DIR/MeetingTranscriptApp.entitlements" \
     "$APP_DIR"
+
+for _ in 1 2 3 4 5; do
+    sleep 0.2
+    xattr -d com.apple.FinderInfo "$APP_DIR" 2>/dev/null || true
+done
 
 echo "Built app: $REPO_ROOT/$APP_DIR"
 echo "Open with: open $APP_DIR"
