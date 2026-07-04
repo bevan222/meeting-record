@@ -20,7 +20,7 @@ private struct ContentBody: View {
             MeetingListView(viewModel: listViewModel)
                 .frame(minWidth: 260)
         } detail: {
-            MeetingDetailView(viewModel: detailViewModel, selectedMeetingId: listViewModel.selectedMeetingId)
+            MeetingDetailView(viewModel: detailViewModel)
         }
         .onAppear {
             listViewModel.reload()

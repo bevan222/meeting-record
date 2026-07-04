@@ -3,7 +3,6 @@ import SwiftUI
 
 struct MeetingDetailView: View {
     @ObservedObject var viewModel: MeetingDetailViewModel
-    let selectedMeetingId: String?
 
     var body: some View {
         Group {
@@ -32,9 +31,6 @@ struct MeetingDetailView: View {
                     description: Text("Start a recording or select a saved meeting.")
                 )
             }
-        }
-        .onAppear {
-            viewModel.load(meetingId: selectedMeetingId)
         }
     }
 

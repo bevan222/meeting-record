@@ -7,12 +7,15 @@ struct TranscriptSegmentRow: View {
     let onTextChanged: (String) -> Void
 
     @State private var text: String
+    @State private var lastCommittedText: String
+    @FocusState private var isTextFocused: Bool
 
     init(segment: TranscriptSegment, speakerName: String, onTextChanged: @escaping (String) -> Void) {
         self.segment = segment
         self.speakerName = speakerName
         self.onTextChanged = onTextChanged
         self._text = State(initialValue: segment.text)
+        self._lastCommittedText = State(initialValue: segment.text)
     }
 
     var body: some View {
@@ -30,17 +33,32 @@ struct TranscriptSegmentRow: View {
                 TextField("Transcript text", text: $text, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(2...6)
-                    .onChange(of: text) { _, newValue in
-                        onTextChanged(newValue)
+                    .focused($isTextFocused)
+                    .onSubmit {
+                        commit()
                     }
             }
         }
         .padding(.vertical, 6)
+        .onChange(of: isTextFocused) { oldValue, newValue in
+            if oldValue && !newValue {
+                commit()
+            }
+        }
         .onChange(of: segment.text) { _, newValue in
-            if text != newValue {
+            lastCommittedText = newValue
+
+            if !isTextFocused && text != newValue {
                 text = newValue
             }
         }
+    }
+
+    private func commit() {
+        guard text != lastCommittedText else { return }
+
+        lastCommittedText = text
+        onTextChanged(text)
     }
 
     private func timestamp(_ seconds: TimeInterval) -> String {
