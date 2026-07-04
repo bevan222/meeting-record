@@ -22,6 +22,7 @@ final class MeetingListViewModel: ObservableObject {
     private var recorderChanges: AnyCancellable?
     private var livePreviewTask: Task<Void, Never>?
     private var isLivePreviewTranscribing = false
+    private var livePreviewGeneration = 0
 
     init(repository: FileMeetingRepository) {
         self.repository = repository
@@ -184,13 +185,17 @@ final class MeetingListViewModel: ObservableObject {
 
     func runLivePreviewTick(container: AppContainer) async {
         guard let recordingContext = activeRecordingContext else { return }
+        guard recorder.isRecording else { return }
         guard !isLivePreviewTranscribing else { return }
 
+        let generation = livePreviewGeneration
         isLivePreviewTranscribing = true
         isLivePreviewUpdating = true
         defer {
-            isLivePreviewTranscribing = false
-            isLivePreviewUpdating = false
+            if livePreviewGeneration == generation {
+                isLivePreviewTranscribing = false
+                isLivePreviewUpdating = false
+            }
         }
 
         do {
@@ -199,11 +204,11 @@ final class MeetingListViewModel: ObservableObject {
                 language: recordingContext.language
             )
 
-            guard activeRecordingContext?.meetingId == recordingContext.meetingId else { return }
+            guard canApplyLivePreviewResult(for: recordingContext, generation: generation) else { return }
             livePreviewSegments = segments
             livePreviewWarning = nil
         } catch {
-            guard activeRecordingContext?.meetingId == recordingContext.meetingId else { return }
+            guard canApplyLivePreviewResult(for: recordingContext, generation: generation) else { return }
             livePreviewWarning = "暫定逐字稿更新失敗，停止錄音後仍會產生正式逐字稿。"
         }
     }
@@ -268,12 +273,19 @@ final class MeetingListViewModel: ObservableObject {
     }
 
     private func clearLivePreview() {
+        livePreviewGeneration += 1
         livePreviewTask?.cancel()
         livePreviewTask = nil
         isLivePreviewTranscribing = false
         isLivePreviewUpdating = false
         livePreviewSegments = []
         livePreviewWarning = nil
+    }
+
+    private func canApplyLivePreviewResult(for recordingContext: RecordingContext, generation: Int) -> Bool {
+        activeRecordingContext?.meetingId == recordingContext.meetingId
+            && recorder.isRecording
+            && livePreviewGeneration == generation
     }
 
     private func markActiveRecordingFailed(

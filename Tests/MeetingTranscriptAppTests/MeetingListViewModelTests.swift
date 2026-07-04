@@ -63,7 +63,7 @@ final class MeetingListViewModelTests: XCTestCase {
         XCTAssertEqual(failedDocument.meeting.language, recordingDocument.meeting.language)
         XCTAssertEqual(failedDocument.meeting.sourceAudio, recordingDocument.meeting.sourceAudio)
         XCTAssertEqual(failedDocument.meeting.durationSeconds, 12)
-        XCTAssertEqual(recordingDocument.segments, [])
+        XCTAssertEqual(failedDocument.segments, [])
         XCTAssertEqual(viewModel.errorMessage, "Stop failed.")
         XCTAssertTrue(viewModel.canStartRecording)
     }
@@ -224,6 +224,59 @@ final class MeetingListViewModelTests: XCTestCase {
         XCTAssertEqual(try repository.loadTranscript(meetingId: recordingDocument.meeting.id).meeting.status, .recording)
     }
 
+    func testLivePreviewTickSkipsWhenRecorderIsNoLongerRecording() async throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let previewTranscriber = SucceedingLivePreviewTranscriber()
+        let container = AppContainer(
+            repository: repository,
+            workflow: SucceedingWorkflow(),
+            livePreviewTranscriber: previewTranscriber
+        )
+        let recorder = SuccessfulRecorder()
+        let viewModel = container.meetingListViewModel
+        viewModel.recorder = recorder
+
+        viewModel.startRecording(container: container)
+        _ = try await waitForTranscript(in: repository) { document in
+            document.meeting.status == .recording
+        }
+
+        recorder.state = .stopping
+        await viewModel.runLivePreviewTick(container: container)
+
+        XCTAssertEqual(previewTranscriber.requestedAudioURLs, [])
+        XCTAssertEqual(viewModel.livePreviewSegments, [])
+    }
+
+    func testLivePreviewTickFinishingAfterRecorderStopsDoesNotPublishSegments() async throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let previewTranscriber = BlockingLivePreviewTranscriber()
+        let container = AppContainer(
+            repository: repository,
+            workflow: SucceedingWorkflow(),
+            livePreviewTranscriber: previewTranscriber
+        )
+        let recorder = SuccessfulRecorder()
+        let viewModel = container.meetingListViewModel
+        viewModel.recorder = recorder
+
+        viewModel.startRecording(container: container)
+        _ = try await waitForTranscript(in: repository) { document in
+            document.meeting.status == .recording
+        }
+
+        let tick = Task { await viewModel.runLivePreviewTick(container: container) }
+        try await waitForPreviewStart(previewTranscriber)
+        recorder.state = .stopping
+
+        previewTranscriber.complete()
+        await tick.value
+
+        XCTAssertEqual(viewModel.livePreviewSegments, [])
+    }
+
     func testLivePreviewSkipsOverlappingTick() async throws {
         let root = try Self.makeTemporaryRoot()
         let repository = FileMeetingRepository(rootDirectory: root)
@@ -243,7 +296,7 @@ final class MeetingListViewModelTests: XCTestCase {
         }
 
         let firstTick = Task { await viewModel.runLivePreviewTick(container: container) }
-        try await Task.sleep(nanoseconds: 40_000_000)
+        try await waitForPreviewStart(previewTranscriber)
         await viewModel.runLivePreviewTick(container: container)
 
         XCTAssertEqual(previewTranscriber.startedCount, 1)
@@ -325,6 +378,22 @@ final class MeetingListViewModelTests: XCTestCase {
         }
 
         XCTFail("Timed out waiting for transcript", file: file, line: line)
+        throw WaitError.timedOut
+    }
+
+    private func waitForPreviewStart(
+        _ transcriber: BlockingLivePreviewTranscriber,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async throws {
+        for _ in 0..<50 {
+            if transcriber.startedCount == 1 {
+                return
+            }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+
+        XCTFail("Timed out waiting for live preview tick to start", file: file, line: line)
         throw WaitError.timedOut
     }
 }
