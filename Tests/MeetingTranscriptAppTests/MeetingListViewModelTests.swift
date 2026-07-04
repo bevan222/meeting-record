@@ -200,6 +200,56 @@ final class MeetingListViewModelTests: XCTestCase {
         XCTAssertEqual(previewTranscriber.requestedAudioURLs.map(\.lastPathComponent), ["audio.m4a"])
     }
 
+    func testStartRecordingBeginsLivePreviewLoop() async throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let previewTranscriber = SucceedingLivePreviewTranscriber()
+        let container = AppContainer(
+            repository: repository,
+            workflow: SucceedingWorkflow(),
+            livePreviewTranscriber: previewTranscriber
+        )
+        let recorder = SuccessfulRecorder()
+        let viewModel = container.meetingListViewModel
+        viewModel.recorder = recorder
+
+        viewModel.startRecording(container: container)
+        _ = try await waitForTranscript(in: repository) { document in
+            document.meeting.status == .recording
+        }
+
+        XCTAssertTrue(viewModel.isLivePreviewLoopActive)
+    }
+
+    func testStopRecordingClearsLivePreviewBeforeFinalProcessing() async throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let container = AppContainer(
+            repository: repository,
+            workflow: SucceedingWorkflow(),
+            livePreviewTranscriber: SucceedingLivePreviewTranscriber()
+        )
+        let recorder = SuccessfulRecorder()
+        let viewModel = container.meetingListViewModel
+        viewModel.recorder = recorder
+
+        viewModel.startRecording(container: container)
+        let recordingDocument = try await waitForTranscript(in: repository) { document in
+            document.meeting.status == .recording
+        }
+        await viewModel.runLivePreviewTick(container: container)
+        XCTAssertFalse(viewModel.livePreviewSegments.isEmpty)
+
+        viewModel.stopRecording(container: container)
+        _ = try await waitForTranscript(in: repository) { document in
+            document.meeting.id == recordingDocument.meeting.id && document.meeting.status == .speakerAttributed
+        }
+
+        XCTAssertEqual(viewModel.livePreviewSegments, [])
+        XCTAssertNil(viewModel.livePreviewWarning)
+        XCTAssertFalse(viewModel.isLivePreviewLoopActive)
+    }
+
     func testLivePreviewFailureSetsWarningWithoutFailingMeeting() async throws {
         let root = try Self.makeTemporaryRoot()
         let repository = FileMeetingRepository(rootDirectory: root)

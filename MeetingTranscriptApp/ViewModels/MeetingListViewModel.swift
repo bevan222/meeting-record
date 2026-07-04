@@ -50,6 +50,10 @@ final class MeetingListViewModel: ObservableObject {
         return false
     }
 
+    var isLivePreviewLoopActive: Bool {
+        livePreviewTask != nil
+    }
+
     func reload() {
         do {
             meetings = try repository.listMeetings()
@@ -112,6 +116,7 @@ final class MeetingListViewModel: ObservableObject {
                 selectedMeetingId = recordingContext.meetingId
                 reload()
                 container.meetingDetailViewModel.load(meetingId: recordingContext.meetingId)
+                startLivePreviewLoop(container: container)
             } catch {
                 if recorder.isRecording {
                     _ = await recorder.stopRecording()
@@ -284,6 +289,17 @@ final class MeetingListViewModel: ObservableObject {
         livePreviewWarning = nil
     }
 
+    private func startLivePreviewLoop(container: AppContainer) {
+        livePreviewTask?.cancel()
+        livePreviewTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+                guard !Task.isCancelled else { return }
+                await self?.runLivePreviewTick(container: container)
+            }
+        }
+    }
+
     private func canApplyLivePreviewResult(for recordingContext: RecordingContext, generation: Int) -> Bool {
         activeRecordingContext?.meetingId == recordingContext.meetingId
             && recorder.isRecording
@@ -323,12 +339,12 @@ final class MeetingListViewModel: ObservableObject {
             selectedMeetingId = document.meeting.id
             reload()
             container.meetingDetailViewModel.load(meetingId: document.meeting.id)
-            activeRecordingContext = nil
             clearLivePreview()
+            activeRecordingContext = nil
             errorMessage = message ?? recorderFailureMessage
         } catch {
-            activeRecordingContext = nil
             clearLivePreview()
+            activeRecordingContext = nil
             errorMessage = error.localizedDescription
         }
     }
