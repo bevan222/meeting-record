@@ -5,7 +5,7 @@ import MeetingTranscriptCore
 @MainActor
 final class AppContainer: ObservableObject {
     let repository: FileMeetingRepository
-    let workflow: MeetingWorkflow<MockTranscriptionEngine, MockDiarizationEngine>
+    let workflow: MeetingWorkflow<WhisperKitTranscriptionEngine, MockDiarizationEngine>
     let markdownExporter: MarkdownTranscriptExporter
     let jsonExporter: JSONTranscriptExporter
 
@@ -21,7 +21,7 @@ final class AppContainer: ObservableObject {
 
         self.repository = repository
         self.workflow = MeetingWorkflow(
-            transcriptionEngine: MockTranscriptionEngine(),
+            transcriptionEngine: WhisperKitTranscriptionEngine(),
             diarizationEngine: MockDiarizationEngine(),
             assembler: TranscriptAssembler()
         )

@@ -33,12 +33,14 @@ codesign \
     --entitlements "$RESOURCES_DIR/MeetingTranscriptApp.entitlements" \
     "$APP_DIR"
 
-for _ in 1 2 3 4 5; do
-    sleep 0.2
+for _ in 1 2 3 4 5 6 7 8 9 10; do
     xattr -d com.apple.FinderInfo "$APP_DIR" 2>/dev/null || true
+    if codesign --verify --deep --strict --verbose=4 "$APP_DIR"; then
+        echo "Built app: $REPO_ROOT/$APP_DIR"
+        echo "Open with: open $APP_DIR"
+        exit 0
+    fi
+    sleep 0.3
 done
 
 codesign --verify --deep --strict --verbose=4 "$APP_DIR"
-
-echo "Built app: $REPO_ROOT/$APP_DIR"
-echo "Open with: open $APP_DIR"
