@@ -94,6 +94,7 @@ final class MeetingListViewModelTests: XCTestCase {
         }
 
         XCTAssertEqual(viewModel.livePreviewSegments, [])
+        XCTAssertFalse(viewModel.isLivePreviewLoopActive)
         XCTAssertEqual(completedDocument.segments.map(\.text), ["真實 WhisperKit 逐字稿"])
         XCTAssertEqual(completedDocument.segments[0].speakerId, "speaker_1")
         XCTAssertEqual(container.meetingDetailViewModel.document?.segments.map(\.text), ["真實 WhisperKit 逐字稿"])

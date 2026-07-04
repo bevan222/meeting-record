@@ -2,7 +2,7 @@
 
 This is a local-only SwiftUI macOS app for recording a meeting, producing a transcript, assigning speaker labels, renaming speakers, and exporting the result. Audio and transcript files stay on the local machine under the app's Application Support directory.
 
-The app attempts a 10-second live preview while recording. Preview text is UI-only and is not saved as the final transcript. After recording stops, the app transcribes the saved `audio.m4a` with WhisperKit through the `WhisperKitTranscriptionEngine` adapter, then runs SpeakerKit diarization through `SpeakerKitDiarizationEngine` and merges speaker labels onto transcript segments.
+The app attempts to refresh a UI-only live preview every 10 seconds while recording. Preview text is not saved as the final transcript. After recording stops, the app transcribes the saved `audio.m4a` with WhisperKit through the `WhisperKitTranscriptionEngine` adapter, then runs SpeakerKit diarization through `SpeakerKitDiarizationEngine` and merges speaker labels onto transcript segments.
 
 ## Build
 
@@ -37,7 +37,7 @@ The app also uses the Argmax OSS Swift `SpeakerKit` product after recording stop
 The current flow is:
 
 ```text
-Record audio.m4a -> 10-second UI preview attempts -> Stop -> WhisperKit transcribes full audio.m4a -> SpeakerKit diarizes full audio.m4a -> save transcript.json/transcript.md
+Record audio.m4a -> refresh UI-only preview every 10 seconds -> Stop -> WhisperKit transcribes full audio.m4a -> SpeakerKit diarizes full audio.m4a -> save transcript.json/transcript.md
 ```
 
 ## Runtime Storage
