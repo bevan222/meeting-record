@@ -17,7 +17,7 @@ final class AppContainer: ObservableObject {
             repository: FileMeetingRepository(rootDirectory: AppDirectories.meetingsDirectory()),
             workflow: MeetingWorkflow(
                 transcriptionEngine: WhisperKitTranscriptionEngine(),
-                diarizationEngine: MockDiarizationEngine(),
+                diarizationEngine: SpeakerKitDiarizationEngine(),
                 assembler: TranscriptAssembler()
             )
         )
@@ -39,7 +39,7 @@ final class AppContainer: ObservableObject {
             repository: repository,
             workflow: MeetingWorkflow(
                 transcriptionEngine: WhisperKitTranscriptionEngine(),
-                diarizationEngine: MockDiarizationEngine(),
+                diarizationEngine: SpeakerKitDiarizationEngine(),
                 assembler: TranscriptAssembler()
             )
         )

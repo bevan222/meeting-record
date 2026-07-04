@@ -20,7 +20,8 @@ let package = Package(
             name: "MeetingTranscriptApp",
             dependencies: [
                 "MeetingTranscriptCore",
-                .product(name: "WhisperKit", package: "argmax-oss-swift")
+                .product(name: "WhisperKit", package: "argmax-oss-swift"),
+                .product(name: "SpeakerKit", package: "argmax-oss-swift")
             ],
             path: "MeetingTranscriptApp",
             exclude: ["Resources/Info.plist", "Resources/MeetingTranscriptApp.entitlements"]
