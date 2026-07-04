@@ -116,7 +116,7 @@ final class MeetingListViewModel: ObservableObject {
                 selectedMeetingId = recordingContext.meetingId
                 reload()
                 container.meetingDetailViewModel.load(meetingId: recordingContext.meetingId)
-                startLivePreviewLoop(container: container)
+                startLivePreviewLoop(livePreviewTranscriber: container.livePreviewTranscriber)
             } catch {
                 if recorder.isRecording {
                     _ = await recorder.stopRecording()
@@ -191,6 +191,10 @@ final class MeetingListViewModel: ObservableObject {
     }
 
     func runLivePreviewTick(container: AppContainer) async {
+        await runLivePreviewTick(livePreviewTranscriber: container.livePreviewTranscriber)
+    }
+
+    private func runLivePreviewTick(livePreviewTranscriber: any LivePreviewTranscribing) async {
         guard let recordingContext = activeRecordingContext else { return }
         guard recorder.isRecording else { return }
         guard !isLivePreviewTranscribing else { return }
@@ -206,7 +210,7 @@ final class MeetingListViewModel: ObservableObject {
         }
 
         do {
-            let segments = try await container.livePreviewTranscriber.transcribePreview(
+            let segments = try await livePreviewTranscriber.transcribePreview(
                 audioURL: recordingContext.audioURL,
                 language: recordingContext.language
             )
@@ -289,13 +293,13 @@ final class MeetingListViewModel: ObservableObject {
         livePreviewWarning = nil
     }
 
-    private func startLivePreviewLoop(container: AppContainer) {
+    private func startLivePreviewLoop(livePreviewTranscriber: any LivePreviewTranscribing) {
         livePreviewTask?.cancel()
         livePreviewTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 10_000_000_000)
                 guard !Task.isCancelled else { return }
-                await self?.runLivePreviewTick(container: container)
+                await self?.runLivePreviewTick(livePreviewTranscriber: livePreviewTranscriber)
             }
         }
     }

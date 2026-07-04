@@ -198,6 +198,11 @@ final class MeetingListViewModelTests: XCTestCase {
         let savedDocument = try repository.loadTranscript(meetingId: recordingDocument.meeting.id)
         XCTAssertEqual(savedDocument.segments, [])
         XCTAssertEqual(previewTranscriber.requestedAudioURLs.map(\.lastPathComponent), ["audio.m4a"])
+
+        viewModel.stopRecording(container: container)
+        _ = try await waitForTranscript(in: repository) { document in
+            document.meeting.id == recordingDocument.meeting.id && document.meeting.status == .speakerAttributed
+        }
     }
 
     func testStartRecordingBeginsLivePreviewLoop() async throws {
@@ -214,11 +219,17 @@ final class MeetingListViewModelTests: XCTestCase {
         viewModel.recorder = recorder
 
         viewModel.startRecording(container: container)
-        _ = try await waitForTranscript(in: repository) { document in
+        let recordingDocument = try await waitForTranscript(in: repository) { document in
             document.meeting.status == .recording
         }
 
         XCTAssertTrue(viewModel.isLivePreviewLoopActive)
+
+        viewModel.stopRecording(container: container)
+        try await waitForLivePreviewLoopInactive(viewModel)
+        _ = try await waitForTranscript(in: repository) { document in
+            document.meeting.id == recordingDocument.meeting.id && document.meeting.status == .speakerAttributed
+        }
     }
 
     func testStopRecordingClearsLivePreviewBeforeFinalProcessing() async throws {
@@ -272,6 +283,11 @@ final class MeetingListViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.livePreviewSegments, [])
         XCTAssertEqual(viewModel.livePreviewWarning, "暫定逐字稿更新失敗，停止錄音後仍會產生正式逐字稿。")
         XCTAssertEqual(try repository.loadTranscript(meetingId: recordingDocument.meeting.id).meeting.status, .recording)
+
+        viewModel.stopRecording(container: container)
+        _ = try await waitForTranscript(in: repository) { document in
+            document.meeting.id == recordingDocument.meeting.id && document.meeting.status == .speakerAttributed
+        }
     }
 
     func testLivePreviewTickSkipsWhenRecorderIsNoLongerRecording() async throws {
@@ -288,7 +304,7 @@ final class MeetingListViewModelTests: XCTestCase {
         viewModel.recorder = recorder
 
         viewModel.startRecording(container: container)
-        _ = try await waitForTranscript(in: repository) { document in
+        let recordingDocument = try await waitForTranscript(in: repository) { document in
             document.meeting.status == .recording
         }
 
@@ -297,6 +313,11 @@ final class MeetingListViewModelTests: XCTestCase {
 
         XCTAssertEqual(previewTranscriber.requestedAudioURLs, [])
         XCTAssertEqual(viewModel.livePreviewSegments, [])
+
+        viewModel.stopRecording(container: container)
+        _ = try await waitForTranscript(in: repository) { document in
+            document.meeting.id == recordingDocument.meeting.id && document.meeting.status == .speakerAttributed
+        }
     }
 
     func testLivePreviewTickFinishingAfterRecorderStopsDoesNotPublishSegments() async throws {
@@ -313,7 +334,7 @@ final class MeetingListViewModelTests: XCTestCase {
         viewModel.recorder = recorder
 
         viewModel.startRecording(container: container)
-        _ = try await waitForTranscript(in: repository) { document in
+        let recordingDocument = try await waitForTranscript(in: repository) { document in
             document.meeting.status == .recording
         }
 
@@ -325,6 +346,11 @@ final class MeetingListViewModelTests: XCTestCase {
         await tick.value
 
         XCTAssertEqual(viewModel.livePreviewSegments, [])
+
+        viewModel.stopRecording(container: container)
+        _ = try await waitForTranscript(in: repository) { document in
+            document.meeting.id == recordingDocument.meeting.id && document.meeting.status == .speakerAttributed
+        }
     }
 
     func testLivePreviewClearsWhenStoppingBeforeWorkflowCompletes() async throws {
@@ -377,7 +403,7 @@ final class MeetingListViewModelTests: XCTestCase {
         viewModel.recorder = recorder
 
         viewModel.startRecording(container: container)
-        _ = try await waitForTranscript(in: repository) { document in
+        let recordingDocument = try await waitForTranscript(in: repository) { document in
             document.meeting.status == .recording
         }
 
@@ -390,6 +416,11 @@ final class MeetingListViewModelTests: XCTestCase {
         previewTranscriber.complete()
         await firstTick.value
         XCTAssertEqual(viewModel.livePreviewSegments.map(\.text), ["解除阻塞後的暫定逐字稿"])
+
+        viewModel.stopRecording(container: container)
+        _ = try await waitForTranscript(in: repository) { document in
+            document.meeting.id == recordingDocument.meeting.id && document.meeting.status == .speakerAttributed
+        }
     }
 
     func testEachSuccessfulRecordingUsesIndependentMeetingFolderAudio() async throws {
@@ -480,6 +511,22 @@ final class MeetingListViewModelTests: XCTestCase {
         }
 
         XCTFail("Timed out waiting for live preview tick to start", file: file, line: line)
+        throw WaitError.timedOut
+    }
+
+    private func waitForLivePreviewLoopInactive(
+        _ viewModel: MeetingListViewModel,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async throws {
+        for _ in 0..<50 {
+            if !viewModel.isLivePreviewLoopActive {
+                return
+            }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+
+        XCTFail("Timed out waiting for live preview loop to stop", file: file, line: line)
         throw WaitError.timedOut
     }
 }
