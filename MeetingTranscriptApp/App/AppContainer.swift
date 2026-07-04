@@ -5,7 +5,7 @@ import MeetingTranscriptCore
 @MainActor
 final class AppContainer: ObservableObject {
     let repository: FileMeetingRepository
-    let workflow: MeetingWorkflow<WhisperKitTranscriptionEngine, MockDiarizationEngine>
+    let workflow: any TranscriptBuilding
     let markdownExporter: MarkdownTranscriptExporter
     let jsonExporter: JSONTranscriptExporter
 
@@ -13,21 +13,35 @@ final class AppContainer: ObservableObject {
     let meetingDetailViewModel: MeetingDetailViewModel
 
     convenience init() {
-        self.init(repository: FileMeetingRepository(rootDirectory: AppDirectories.meetingsDirectory()))
+        self.init(
+            repository: FileMeetingRepository(rootDirectory: AppDirectories.meetingsDirectory()),
+            workflow: MeetingWorkflow(
+                transcriptionEngine: WhisperKitTranscriptionEngine(),
+                diarizationEngine: MockDiarizationEngine(),
+                assembler: TranscriptAssembler()
+            )
+        )
     }
 
-    init(repository: FileMeetingRepository) {
+    init(repository: FileMeetingRepository, workflow: any TranscriptBuilding) {
         let markdownExporter = MarkdownTranscriptExporter()
 
         self.repository = repository
-        self.workflow = MeetingWorkflow(
-            transcriptionEngine: WhisperKitTranscriptionEngine(),
-            diarizationEngine: MockDiarizationEngine(),
-            assembler: TranscriptAssembler()
-        )
+        self.workflow = workflow
         self.markdownExporter = markdownExporter
         self.jsonExporter = JSONTranscriptExporter()
         self.meetingListViewModel = MeetingListViewModel(repository: repository)
         self.meetingDetailViewModel = MeetingDetailViewModel(repository: repository, markdownExporter: markdownExporter)
+    }
+
+    convenience init(repository: FileMeetingRepository) {
+        self.init(
+            repository: repository,
+            workflow: MeetingWorkflow(
+                transcriptionEngine: WhisperKitTranscriptionEngine(),
+                diarizationEngine: MockDiarizationEngine(),
+                assembler: TranscriptAssembler()
+            )
+        )
     }
 }

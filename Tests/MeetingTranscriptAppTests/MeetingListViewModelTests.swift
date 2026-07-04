@@ -68,6 +68,29 @@ final class MeetingListViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.canStartRecording)
     }
 
+    func testStopSuccessPersistsInjectedWorkflowTranscript() async throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let container = AppContainer(repository: repository, workflow: SucceedingWorkflow())
+        let recorder = SuccessfulRecorder()
+        let viewModel = container.meetingListViewModel
+        viewModel.recorder = recorder
+
+        viewModel.startRecording(container: container)
+        let recordingDocument = try await waitForTranscript(in: repository) { document in
+            document.meeting.status == .recording
+        }
+
+        viewModel.stopRecording(container: container)
+        let completedDocument = try await waitForTranscript(in: repository) { document in
+            document.meeting.id == recordingDocument.meeting.id && document.meeting.status == .speakerAttributed
+        }
+
+        XCTAssertEqual(completedDocument.segments.map(\.text), ["真實 WhisperKit 逐字稿"])
+        XCTAssertEqual(completedDocument.segments[0].speakerId, "speaker_1")
+        XCTAssertEqual(container.meetingDetailViewModel.document?.segments.map(\.text), ["真實 WhisperKit 逐字稿"])
+    }
+
     func testStartFailureDoesNotPersistPlaceholderTranscript() async throws {
         let root = try Self.makeTemporaryRoot()
         let repository = FileMeetingRepository(rootDirectory: root)
@@ -125,6 +148,45 @@ private final class FailingStopRecorder: MacAudioRecorder {
         elapsedSeconds = 12
         state = .failed("Stop failed.")
         return nil
+    }
+}
+
+@MainActor
+private final class SuccessfulRecorder: MacAudioRecorder {
+    override func requestPermission() async -> Bool {
+        true
+    }
+
+    override func startRecording(to url: URL, requestPermissionIfNeeded: Bool) async {
+        try? Data("audio".utf8).write(to: url)
+        elapsedSeconds = 0
+        state = .recording(startedAt: Date())
+    }
+
+    override func stopRecording() async -> URL? {
+        elapsedSeconds = 3
+        let temporaryURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("m4a")
+        try? Data("audio".utf8).write(to: temporaryURL)
+        state = .saved(temporaryURL)
+        return temporaryURL
+    }
+}
+
+private struct SucceedingWorkflow: TranscriptBuilding {
+    func buildTranscript(for meeting: Meeting, audioURL: URL) async throws -> TranscriptDocument {
+        TranscriptDocument(
+            meeting: Meeting(
+                id: meeting.id,
+                title: meeting.title,
+                recordedAt: meeting.recordedAt,
+                durationSeconds: meeting.durationSeconds,
+                language: meeting.language,
+                sourceAudio: audioURL.lastPathComponent,
+                status: .speakerAttributed
+            ),
+            speakers: [Speaker(id: "speaker_1", label: "Speaker 1", name: nil)],
+            segments: [TranscriptSegment(id: "seg_0001", start: 0, end: 3, speakerId: "speaker_1", text: "真實 WhisperKit 逐字稿", confidence: nil)]
+        )
     }
 }
 

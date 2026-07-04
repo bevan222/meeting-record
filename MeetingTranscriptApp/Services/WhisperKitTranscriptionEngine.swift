@@ -12,7 +12,8 @@ struct WhisperKitTranscriptionEngine: TranscriptionEngine {
     func transcribe(audioURL: URL, options: TranscriptionOptions) async throws -> [TranscriptSegment] {
         let config = WhisperKitConfig(model: model)
         let whisperKit = try await WhisperKit(config)
-        let results = try await whisperKit.transcribe(audioPath: audioURL.path)
+        let decodeOptions = DecodingOptions(language: WhisperKitLanguageNormalizer.normalize(options.language))
+        let results = try await whisperKit.transcribe(audioPath: audioURL.path, decodeOptions: decodeOptions)
         let mappedSegments = results.flatMap { result in
             result.segments.map { segment in
                 WhisperKitMappedSegment(

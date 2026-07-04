@@ -2,6 +2,14 @@ import XCTest
 @testable import MeetingTranscriptApp
 
 final class WhisperKitSegmentMapperTests: XCTestCase {
+    func testNormalizesBCP47LanguageForWhisperKit() throws {
+        XCTAssertEqual(WhisperKitLanguageNormalizer.normalize("zh-TW"), "zh")
+        XCTAssertEqual(WhisperKitLanguageNormalizer.normalize("zh-Hant-TW"), "zh")
+        XCTAssertEqual(WhisperKitLanguageNormalizer.normalize("en-US"), "en")
+        XCTAssertEqual(WhisperKitLanguageNormalizer.normalize(" ja "), "ja")
+        XCTAssertNil(WhisperKitLanguageNormalizer.normalize(""))
+    }
+
     func testMapsSegmentsToStableTranscriptSegments() throws {
         let segments = WhisperKitSegmentMapper.map([
             WhisperKitMappedSegment(start: 1.2, end: 3.4, text: "  今天先確認範圍。 "),
