@@ -12,7 +12,14 @@ struct WhisperKitTranscriptionEngine: TranscriptionEngine {
     func transcribe(audioURL: URL, options: TranscriptionOptions) async throws -> [TranscriptSegment] {
         let config = WhisperKitConfig(model: model)
         let whisperKit = try await WhisperKit(config)
-        let decodeOptions = DecodingOptions(language: WhisperKitLanguageNormalizer.normalize(options.language))
+        let language = WhisperKitLanguageNormalizer.normalize(options.language)
+        var decodeOptions = DecodingOptions(language: language)
+        if let prompt = WhisperKitPrompt.prompt(for: language), let tokenizer = whisperKit.tokenizer {
+            decodeOptions.promptTokens = tokenizer
+                .encode(text: " " + prompt)
+                .filter { $0 < tokenizer.specialTokens.specialTokenBegin }
+            decodeOptions.usePrefillPrompt = true
+        }
         let results = try await whisperKit.transcribe(audioPath: audioURL.path, decodeOptions: decodeOptions)
         let mappedSegments = results.flatMap { result in
             result.segments.map { segment in

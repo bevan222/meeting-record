@@ -2,6 +2,14 @@ import XCTest
 @testable import MeetingTranscriptApp
 
 final class WhisperKitSegmentMapperTests: XCTestCase {
+    func testUsesTraditionalChinesePromptForChineseTranscription() throws {
+        XCTAssertEqual(
+            WhisperKitPrompt.prompt(for: "zh"),
+            "以下是台灣繁體中文會議逐字稿。請使用繁體中文，不要使用簡體中文。"
+        )
+        XCTAssertNil(WhisperKitPrompt.prompt(for: "en"))
+    }
+
     func testNormalizesBCP47LanguageForWhisperKit() throws {
         XCTAssertEqual(WhisperKitLanguageNormalizer.normalize("zh-TW"), "zh")
         XCTAssertEqual(WhisperKitLanguageNormalizer.normalize("zh-Hant-TW"), "zh")
