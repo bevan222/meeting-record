@@ -8,6 +8,9 @@ final class MeetingListViewModel: ObservableObject {
     @Published var selectedMeetingId: String?
     @Published var searchText = ""
     @Published var errorMessage: String?
+    @Published var livePreviewSegments: [TranscriptSegment] = []
+    @Published var livePreviewWarning: String?
+    @Published var isLivePreviewUpdating = false
     @Published var recorder = MacAudioRecorder() {
         didSet {
             subscribeToRecorderChanges()
@@ -17,6 +20,8 @@ final class MeetingListViewModel: ObservableObject {
     private let repository: FileMeetingRepository
     @Published private var activeRecordingContext: RecordingContext?
     private var recorderChanges: AnyCancellable?
+    private var livePreviewTask: Task<Void, Never>?
+    private var isLivePreviewTranscribing = false
 
     init(repository: FileMeetingRepository) {
         self.repository = repository
@@ -70,6 +75,7 @@ final class MeetingListViewModel: ObservableObject {
             guard activeRecordingContext == nil else { return }
 
             errorMessage = nil
+            clearLivePreview()
             guard await recorder.requestPermission() else {
                 errorMessage = "Microphone access was denied."
                 return
@@ -172,6 +178,33 @@ final class MeetingListViewModel: ObservableObject {
             }
 
             activeRecordingContext = nil
+            clearLivePreview()
+        }
+    }
+
+    func runLivePreviewTick(container: AppContainer) async {
+        guard let recordingContext = activeRecordingContext else { return }
+        guard !isLivePreviewTranscribing else { return }
+
+        isLivePreviewTranscribing = true
+        isLivePreviewUpdating = true
+        defer {
+            isLivePreviewTranscribing = false
+            isLivePreviewUpdating = false
+        }
+
+        do {
+            let segments = try await container.livePreviewTranscriber.transcribePreview(
+                audioURL: recordingContext.audioURL,
+                language: recordingContext.language
+            )
+
+            guard activeRecordingContext?.meetingId == recordingContext.meetingId else { return }
+            livePreviewSegments = segments
+            livePreviewWarning = nil
+        } catch {
+            guard activeRecordingContext?.meetingId == recordingContext.meetingId else { return }
+            livePreviewWarning = "暫定逐字稿更新失敗，停止錄音後仍會產生正式逐字稿。"
         }
     }
 
@@ -230,8 +263,17 @@ final class MeetingListViewModel: ObservableObject {
                 status: .recording
             ),
             speakers: [],
-            segments: MockTranscriptionEngine.sampleSegments
+            segments: []
         )
+    }
+
+    private func clearLivePreview() {
+        livePreviewTask?.cancel()
+        livePreviewTask = nil
+        isLivePreviewTranscribing = false
+        isLivePreviewUpdating = false
+        livePreviewSegments = []
+        livePreviewWarning = nil
     }
 
     private func markActiveRecordingFailed(
@@ -268,9 +310,11 @@ final class MeetingListViewModel: ObservableObject {
             reload()
             container.meetingDetailViewModel.load(meetingId: document.meeting.id)
             activeRecordingContext = nil
+            clearLivePreview()
             errorMessage = message ?? recorderFailureMessage
         } catch {
             activeRecordingContext = nil
+            clearLivePreview()
             errorMessage = error.localizedDescription
         }
     }

@@ -63,7 +63,7 @@ final class MeetingListViewModelTests: XCTestCase {
         XCTAssertEqual(failedDocument.meeting.language, recordingDocument.meeting.language)
         XCTAssertEqual(failedDocument.meeting.sourceAudio, recordingDocument.meeting.sourceAudio)
         XCTAssertEqual(failedDocument.meeting.durationSeconds, 12)
-        XCTAssertFalse(recordingDocument.segments.isEmpty)
+        XCTAssertEqual(recordingDocument.segments, [])
         XCTAssertEqual(viewModel.errorMessage, "Stop failed.")
         XCTAssertTrue(viewModel.canStartRecording)
     }
@@ -170,6 +170,87 @@ final class MeetingListViewModelTests: XCTestCase {
         XCTAssertEqual(failedDocument.segments, [])
         XCTAssertEqual(viewModel.errorMessage, "Workflow failed.")
         XCTAssertTrue(viewModel.canStartRecording)
+    }
+
+    func testLivePreviewTickUpdatesUiOnlyPreviewSegmentsWithoutSavingTranscript() async throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let previewTranscriber = SucceedingLivePreviewTranscriber()
+        let container = AppContainer(
+            repository: repository,
+            workflow: SucceedingWorkflow(),
+            livePreviewTranscriber: previewTranscriber
+        )
+        let recorder = SuccessfulRecorder()
+        let viewModel = container.meetingListViewModel
+        viewModel.recorder = recorder
+
+        viewModel.startRecording(container: container)
+        let recordingDocument = try await waitForTranscript(in: repository) { document in
+            document.meeting.status == .recording
+        }
+
+        await viewModel.runLivePreviewTick(container: container)
+
+        XCTAssertEqual(viewModel.livePreviewSegments.map(\.text), ["暫定逐字稿"])
+        XCTAssertNil(viewModel.livePreviewWarning)
+
+        let savedDocument = try repository.loadTranscript(meetingId: recordingDocument.meeting.id)
+        XCTAssertEqual(savedDocument.segments, [])
+        XCTAssertEqual(previewTranscriber.requestedAudioURLs.map(\.lastPathComponent), ["audio.m4a"])
+    }
+
+    func testLivePreviewFailureSetsWarningWithoutFailingMeeting() async throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let container = AppContainer(
+            repository: repository,
+            workflow: SucceedingWorkflow(),
+            livePreviewTranscriber: FailingLivePreviewTranscriber()
+        )
+        let recorder = SuccessfulRecorder()
+        let viewModel = container.meetingListViewModel
+        viewModel.recorder = recorder
+
+        viewModel.startRecording(container: container)
+        let recordingDocument = try await waitForTranscript(in: repository) { document in
+            document.meeting.status == .recording
+        }
+
+        await viewModel.runLivePreviewTick(container: container)
+
+        XCTAssertEqual(viewModel.livePreviewSegments, [])
+        XCTAssertEqual(viewModel.livePreviewWarning, "暫定逐字稿更新失敗，停止錄音後仍會產生正式逐字稿。")
+        XCTAssertEqual(try repository.loadTranscript(meetingId: recordingDocument.meeting.id).meeting.status, .recording)
+    }
+
+    func testLivePreviewSkipsOverlappingTick() async throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let previewTranscriber = BlockingLivePreviewTranscriber()
+        let container = AppContainer(
+            repository: repository,
+            workflow: SucceedingWorkflow(),
+            livePreviewTranscriber: previewTranscriber
+        )
+        let recorder = SuccessfulRecorder()
+        let viewModel = container.meetingListViewModel
+        viewModel.recorder = recorder
+
+        viewModel.startRecording(container: container)
+        _ = try await waitForTranscript(in: repository) { document in
+            document.meeting.status == .recording
+        }
+
+        let firstTick = Task { await viewModel.runLivePreviewTick(container: container) }
+        try await Task.sleep(nanoseconds: 40_000_000)
+        await viewModel.runLivePreviewTick(container: container)
+
+        XCTAssertEqual(previewTranscriber.startedCount, 1)
+
+        previewTranscriber.complete()
+        await firstTick.value
+        XCTAssertEqual(viewModel.livePreviewSegments.map(\.text), ["解除阻塞後的暫定逐字稿"])
     }
 
     func testEachSuccessfulRecordingUsesIndependentMeetingFolderAudio() async throws {
@@ -406,6 +487,69 @@ private struct FailingWorkflow: TranscriptBuilding {
         var errorDescription: String? {
             "Workflow failed."
         }
+    }
+}
+
+private final class SucceedingLivePreviewTranscriber: LivePreviewTranscribing, @unchecked Sendable {
+    private let lock = NSLock()
+    private var audioURLs: [URL] = []
+
+    var requestedAudioURLs: [URL] {
+        lock.lock()
+        defer { lock.unlock() }
+        return audioURLs
+    }
+
+    func transcribePreview(audioURL: URL, language: String) async throws -> [TranscriptSegment] {
+        lock.withLock {
+            audioURLs.append(audioURL)
+        }
+
+        return [TranscriptSegment(id: "preview_0001", start: 0, end: 3, speakerId: nil, text: "暫定逐字稿", confidence: nil)]
+    }
+}
+
+private struct FailingLivePreviewTranscriber: LivePreviewTranscribing {
+    func transcribePreview(audioURL: URL, language: String) async throws -> [TranscriptSegment] {
+        throw Failure()
+    }
+
+    private struct Failure: Error {}
+}
+
+private final class BlockingLivePreviewTranscriber: LivePreviewTranscribing, @unchecked Sendable {
+    private let lock = NSLock()
+    private var isComplete = false
+    private var count = 0
+
+    var startedCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+
+    func transcribePreview(audioURL: URL, language: String) async throws -> [TranscriptSegment] {
+        lock.withLock {
+            count += 1
+        }
+
+        while !completed {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+
+        return [TranscriptSegment(id: "preview_0001", start: 0, end: 3, speakerId: nil, text: "解除阻塞後的暫定逐字稿", confidence: nil)]
+    }
+
+    func complete() {
+        lock.lock()
+        isComplete = true
+        lock.unlock()
+    }
+
+    private var completed: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return isComplete
     }
 }
 
