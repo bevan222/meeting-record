@@ -57,6 +57,20 @@ public struct FileMeetingRepository: Sendable {
         try markdown.write(to: markdownURL, atomically: true, encoding: .utf8)
     }
 
+    public func saveSummary(_ summary: String, meetingId: String) throws {
+        let directory = try createMeetingDirectory(meetingId: meetingId)
+        let summaryURL = directory.appendingPathComponent("summary.md")
+        try summary.write(to: summaryURL, atomically: true, encoding: .utf8)
+    }
+
+    public func loadSummary(meetingId: String) throws -> String? {
+        let summaryURL = try meetingDirectory(for: meetingId).appendingPathComponent("summary.md")
+        guard FileManager.default.fileExists(atPath: summaryURL.path) else {
+            return nil
+        }
+        return try String(contentsOf: summaryURL, encoding: .utf8)
+    }
+
     public func loadTranscript(meetingId: String) throws -> TranscriptDocument {
         let url = try meetingDirectory(for: meetingId).appendingPathComponent("transcript.json")
         let data = try Data(contentsOf: url)

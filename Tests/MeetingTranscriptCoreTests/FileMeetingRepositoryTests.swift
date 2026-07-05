@@ -93,6 +93,36 @@ final class FileMeetingRepositoryTests: XCTestCase {
         ])
     }
 
+    func testSavesAndLoadsSummaryMarkdown() throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let meetingId = "2026-07-04-1400-tgb-sit"
+
+        try repository.saveSummary("# 摘要\n\n- 決議：開始 SIT。", meetingId: meetingId)
+        let loaded = try repository.loadSummary(meetingId: meetingId)
+
+        XCTAssertEqual(loaded, "# 摘要\n\n- 決議：開始 SIT。")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("\(meetingId)/summary.md").path))
+    }
+
+    func testLoadSummaryReturnsNilWhenSummaryDoesNotExist() throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+
+        let loaded = try repository.loadSummary(meetingId: "2026-07-04-1400-tgb-sit")
+
+        XCTAssertNil(loaded)
+    }
+
+    func testSummaryRejectsInvalidMeetingIds() throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+
+        XCTAssertThrowsError(try repository.saveSummary("summary", meetingId: "../escaped"))
+        XCTAssertThrowsError(try repository.loadSummary(meetingId: "../escaped"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.deletingLastPathComponent().appendingPathComponent("escaped").path))
+    }
+
     private static func makeTemporaryRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
