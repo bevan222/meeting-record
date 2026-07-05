@@ -131,6 +131,21 @@ struct MeetingDetailView: View {
                     viewModel.exportMarkdown()
                 }
 
+                Button("用 Codex 整理摘要") {
+                    Task {
+                        await viewModel.generateSummary()
+                    }
+                }
+                .disabled(!viewModel.canGenerateSummary || isActiveRecordingDocument(document))
+
+                if viewModel.isGeneratingSummary {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Codex 整理中...")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Button("Open Folder") {
                     if let url = viewModel.meetingFolderURL() {
                         NSWorkspace.shared.open(url)
@@ -150,6 +165,21 @@ struct MeetingDetailView: View {
                 Text(livePreviewWarning)
                     .font(.caption)
                     .foregroundStyle(.orange)
+            }
+
+            if let summaryMarkdown = viewModel.summaryMarkdown, !summaryMarkdown.isEmpty {
+                Divider()
+                    .padding(.vertical, 4)
+
+                Text("Codex 摘要")
+                    .font(.headline)
+
+                ScrollView {
+                    Text(summaryMarkdown)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+                .frame(maxHeight: 180)
             }
         }
         .padding()
