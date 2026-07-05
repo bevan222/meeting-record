@@ -129,17 +129,70 @@ final class MeetingDetailViewModelTests: XCTestCase {
         XCTAssertTrue(generator.requestedDocuments.isEmpty)
     }
 
+    func testGenerateSummaryDoesNotPublishWhenSelectedMeetingChanges() async throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let meetingA = Self.sampleDocument(id: "meeting-a", title: "Meeting A")
+        let meetingB = Self.sampleDocument(id: "meeting-b", title: "Meeting B")
+        try repository.save(meetingA)
+        try repository.save(meetingB)
+        let generator = SuspendedSummaryGenerator()
+        let viewModel = MeetingDetailViewModel(
+            repository: repository,
+            markdownExporter: MarkdownTranscriptExporter(),
+            summaryGenerator: generator
+        )
+
+        viewModel.load(meetingId: meetingA.meeting.id)
+        let task = Task {
+            await viewModel.generateSummary()
+        }
+        await generator.waitUntilRequested()
+
+        viewModel.load(meetingId: meetingB.meeting.id)
+        generator.resume(with: "# A 摘要")
+        await task.value
+
+        XCTAssertEqual(try repository.loadSummary(meetingId: meetingA.meeting.id), "# A 摘要")
+        XCTAssertEqual(viewModel.document?.meeting.id, meetingB.meeting.id)
+        XCTAssertNil(viewModel.summaryMarkdown)
+        XCTAssertNotEqual(viewModel.summaryMarkdown, "# A 摘要")
+    }
+
+    func testLoadKeepsTranscriptWhenSummaryMarkdownIsCorrupt() throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let document = Self.sampleDocument()
+        try repository.save(document)
+        let summaryURL = try repository.meetingDirectory(for: document.meeting.id).appendingPathComponent("summary.md")
+        try Data([0xFF, 0xFE, 0xFD]).write(to: summaryURL)
+        let viewModel = MeetingDetailViewModel(
+            repository: repository,
+            markdownExporter: MarkdownTranscriptExporter(),
+            summaryGenerator: FakeSummaryGenerator(mode: .success(""))
+        )
+
+        viewModel.load(meetingId: document.meeting.id)
+
+        XCTAssertEqual(viewModel.document?.meeting.id, document.meeting.id)
+        XCTAssertNil(viewModel.summaryMarkdown)
+        XCTAssertNotNil(viewModel.errorMessage)
+    }
+
     private static func makeTemporaryRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         return root
     }
 
-    private static func sampleDocument() -> TranscriptDocument {
+    private static func sampleDocument(
+        id: String = "2026-07-04-1400-tgb-sit",
+        title: String = "TGB SIT 進度會議"
+    ) -> TranscriptDocument {
         TranscriptDocument(
             meeting: Meeting(
-                id: "2026-07-04-1400-tgb-sit",
-                title: "TGB SIT 進度會議",
+                id: id,
+                title: title,
                 recordedAt: ISO8601DateFormatter().date(from: "2026-07-04T14:00:00+08:00")!,
                 durationSeconds: 65,
                 language: "zh-TW",
@@ -149,6 +202,54 @@ final class MeetingDetailViewModelTests: XCTestCase {
             speakers: [Speaker(id: "speaker_1", label: "Speaker 1", name: nil)],
             segments: [TranscriptSegment(id: "seg_0001", start: 3, end: 8, speakerId: "speaker_1", text: "今天先確認 SIT 測試範圍。", confidence: nil)]
         )
+    }
+}
+
+private final class SuspendedSummaryGenerator: CodexSummaryGenerating, @unchecked Sendable {
+    private let lock = NSLock()
+    private var requestedContinuation: CheckedContinuation<Void, Never>?
+    private var summaryContinuation: CheckedContinuation<String, Error>?
+    private var requestedDocumentsStorage: [TranscriptDocument] = []
+
+    var requestedDocuments: [TranscriptDocument] {
+        lock.lock()
+        defer { lock.unlock() }
+        return requestedDocumentsStorage
+    }
+
+    func generateSummary(for document: TranscriptDocument, meetingDirectory: URL) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            lock.lock()
+            requestedDocumentsStorage.append(document)
+            summaryContinuation = continuation
+            let requestedContinuation = requestedContinuation
+            self.requestedContinuation = nil
+            lock.unlock()
+
+            requestedContinuation?.resume()
+        }
+    }
+
+    func waitUntilRequested() async {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if requestedDocumentsStorage.isEmpty {
+                requestedContinuation = continuation
+                lock.unlock()
+            } else {
+                lock.unlock()
+                continuation.resume()
+            }
+        }
+    }
+
+    func resume(with summary: String) {
+        lock.lock()
+        let summaryContinuation = summaryContinuation
+        self.summaryContinuation = nil
+        lock.unlock()
+
+        summaryContinuation?.resume(returning: summary)
     }
 }
 

@@ -36,12 +36,21 @@ final class MeetingDetailViewModel: ObservableObject {
             return
         }
 
+        let loadedDocument: TranscriptDocument
         do {
-            document = try repository.loadTranscript(meetingId: meetingId)
-            summaryMarkdown = try repository.loadSummary(meetingId: meetingId)
-            errorMessage = nil
+            loadedDocument = try repository.loadTranscript(meetingId: meetingId)
+            document = loadedDocument
         } catch {
             document = nil
+            summaryMarkdown = nil
+            errorMessage = error.localizedDescription
+            return
+        }
+
+        do {
+            summaryMarkdown = try repository.loadSummary(meetingId: loadedDocument.meeting.id)
+            errorMessage = nil
+        } catch {
             summaryMarkdown = nil
             errorMessage = error.localizedDescription
         }
@@ -127,15 +136,20 @@ final class MeetingDetailViewModel: ObservableObject {
         isGeneratingSummary = true
         defer { isGeneratingSummary = false }
 
+        let originalMeetingId = document.meeting.id
         guard save(document) else { return }
 
         do {
-            let directory = try repository.meetingDirectory(for: document.meeting.id)
+            let directory = try repository.meetingDirectory(for: originalMeetingId)
             let summary = try await summaryGenerator.generateSummary(for: document, meetingDirectory: directory)
-            try repository.saveSummary(summary, meetingId: document.meeting.id)
-            summaryMarkdown = try repository.loadSummary(meetingId: document.meeting.id)
+            try repository.saveSummary(summary, meetingId: originalMeetingId)
+            guard self.document?.meeting.id == originalMeetingId else { return }
+
+            summaryMarkdown = try repository.loadSummary(meetingId: originalMeetingId)
             errorMessage = nil
         } catch {
+            guard self.document?.meeting.id == originalMeetingId else { return }
+
             errorMessage = error.localizedDescription
         }
     }
