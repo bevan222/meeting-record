@@ -62,6 +62,7 @@ struct MeetingDetailView: View {
                         speakerEditor(document)
                         Divider()
                         footer(document)
+                        summarySection
                     }
                 } else {
                     ContentUnavailableView(
@@ -122,7 +123,7 @@ struct MeetingDetailView: View {
 
     private func footer(_ document: TranscriptDocument) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
+            HStack(spacing: 8) {
                 Button("Export JSON") {
                     viewModel.exportJSON()
                 }
@@ -131,6 +132,16 @@ struct MeetingDetailView: View {
                     viewModel.exportMarkdown()
                 }
 
+                Button("Open Folder") {
+                    if let url = viewModel.meetingFolderURL() {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+
+                Spacer()
+            }
+
+            HStack(spacing: 8) {
                 Button("用 Codex 整理摘要") {
                     Task {
                         await viewModel.generateSummary()
@@ -146,19 +157,13 @@ struct MeetingDetailView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Button("Open Folder") {
-                    if let url = viewModel.meetingFolderURL() {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
-
-                if let errorMessage = viewModel.errorMessage {
-                    Text(errorMessage)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                }
-
                 Spacer()
+            }
+
+            if let errorMessage = viewModel.errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
             }
 
             if isActiveRecordingDocument(document), let livePreviewWarning {
@@ -166,23 +171,29 @@ struct MeetingDetailView: View {
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
-
-            if let summaryMarkdown = viewModel.summaryMarkdown, !summaryMarkdown.isEmpty {
-                Divider()
-                    .padding(.vertical, 4)
-
-                Text("Codex 摘要")
-                    .font(.headline)
-
-                ScrollView {
-                    Text(summaryMarkdown)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                }
-                .frame(maxHeight: 180)
-            }
         }
         .padding()
+    }
+
+    @ViewBuilder
+    private var summarySection: some View {
+        if let summaryMarkdown = viewModel.summaryMarkdown, !summaryMarkdown.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Divider()
+                DisclosureGroup {
+                    ScrollView {
+                        Text(summaryMarkdown)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+                    .frame(maxHeight: 180)
+                } label: {
+                    Text("Codex 摘要")
+                        .font(.headline)
+                }
+            }
+            .padding([.horizontal, .bottom])
+        }
     }
 
     private func speakerName(for segment: TranscriptSegment, in document: TranscriptDocument) -> String {
