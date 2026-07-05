@@ -28,6 +28,8 @@ open .build/app/MeetingTranscriptApp.app
 
 The bundle script builds the debug executable, creates `.build/app/MeetingTranscriptApp.app`, copies the app `Info.plist`, signs the bundle with the included entitlements, and verifies the signature.
 
+The debug app is signed without macOS App Sandbox. The Codex summary action launches the local Codex CLI, which needs access to the user's Codex auth and state under `~/.codex`.
+
 ## WhisperKit and SpeakerKit Runtime
 
 The app uses the Argmax OSS Swift `WhisperKit` product and defaults to the `large-v3-v20240930_626MB` model for better Chinese transcription quality. The first real transcription may download model files through WhisperKit's model repository before inference runs locally, so the first stop/transcribe action can take longer. After the model is cached, transcription runs on device.
