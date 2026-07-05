@@ -61,10 +61,10 @@ The prompt should include the transcript JSON after the instructions. JSON is pr
 Use the Codex CLI non-interactive mode:
 
 ```bash
-/Applications/Codex.app/Contents/Resources/codex exec --skip-git-repo-check --output-last-message <output-file> <prompt>
+/Applications/Codex.app/Contents/Resources/codex exec --skip-git-repo-check --output-last-message <output-file> -
 ```
 
-The app should treat Codex as a text generator, not as an agent that edits the meeting folder. Codex writes its final response to a temporary output file. The app reads that output file and writes it to `summary.md`.
+The app should pass the prompt through stdin by using `-`. This avoids command-line length limits when a transcript is long. The app should treat Codex as a text generator, not as an agent that edits the meeting folder. Codex writes its final response to a temporary output file. The app reads that output file and writes it to `summary.md`.
 
 Use `Process` rather than shell interpolation so transcript content and file paths are passed safely. The production runner should support an injectable executable URL for tests, but the default should point at `/Applications/Codex.app/Contents/Resources/codex`.
 
