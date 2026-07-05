@@ -40,7 +40,7 @@ The current flow is:
 Record audio.m4a -> refresh UI-only preview every 10 seconds -> Stop -> WhisperKit transcribes full audio.m4a -> SpeakerKit diarizes full audio.m4a -> save transcript.json/transcript.md
 ```
 
-The `用 Codex 整理摘要` action sends the selected meeting's `transcript.json` content to Codex CLI through non-interactive `codex exec`. Codex returns Markdown text, and the app writes that text to `summary.md` in the meeting folder. Recording, transcription, and diarization remain local-only; the summary step uses Codex.
+The `用 Codex 整理摘要` action sends the selected meeting's `transcript.json` content to Codex CLI through ephemeral non-interactive `codex exec`. Codex returns Markdown text, and the app writes that text to `summary.md` in the meeting folder. Recording, transcription, and diarization remain local-only; the summary step uses Codex.
 
 ## Runtime Storage
 
