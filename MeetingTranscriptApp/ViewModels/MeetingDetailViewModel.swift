@@ -6,27 +6,43 @@ import MeetingTranscriptCore
 final class MeetingDetailViewModel: ObservableObject {
     @Published var document: TranscriptDocument?
     @Published var errorMessage: String?
+    @Published var summaryMarkdown: String?
+    @Published var isGeneratingSummary = false
 
     private let repository: FileMeetingRepository
     private let markdownExporter: MarkdownTranscriptExporter
+    private let summaryGenerator: any CodexSummaryGenerating
 
-    init(repository: FileMeetingRepository, markdownExporter: MarkdownTranscriptExporter) {
+    init(
+        repository: FileMeetingRepository,
+        markdownExporter: MarkdownTranscriptExporter,
+        summaryGenerator: any CodexSummaryGenerating
+    ) {
         self.repository = repository
         self.markdownExporter = markdownExporter
+        self.summaryGenerator = summaryGenerator
+    }
+
+    var canGenerateSummary: Bool {
+        guard let document else { return false }
+        return !document.segments.isEmpty && !isGeneratingSummary
     }
 
     func load(meetingId: String?) {
         guard let meetingId else {
             document = nil
             errorMessage = nil
+            summaryMarkdown = nil
             return
         }
 
         do {
             document = try repository.loadTranscript(meetingId: meetingId)
+            summaryMarkdown = try repository.loadSummary(meetingId: meetingId)
             errorMessage = nil
         } catch {
             document = nil
+            summaryMarkdown = nil
             errorMessage = error.localizedDescription
         }
     }
@@ -97,6 +113,30 @@ final class MeetingDetailViewModel: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
             return nil
+        }
+    }
+
+    func generateSummary() async {
+        guard !isGeneratingSummary else { return }
+        guard let document else { return }
+        guard !document.segments.isEmpty else {
+            errorMessage = "No transcript segments are available for summary."
+            return
+        }
+
+        isGeneratingSummary = true
+        defer { isGeneratingSummary = false }
+
+        guard save(document) else { return }
+
+        do {
+            let directory = try repository.meetingDirectory(for: document.meeting.id)
+            let summary = try await summaryGenerator.generateSummary(for: document, meetingDirectory: directory)
+            try repository.saveSummary(summary, meetingId: document.meeting.id)
+            summaryMarkdown = try repository.loadSummary(meetingId: document.meeting.id)
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 
