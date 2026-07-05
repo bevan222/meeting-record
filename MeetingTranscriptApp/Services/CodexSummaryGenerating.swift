@@ -110,17 +110,117 @@ struct ProcessCodexCommandRunner: CodexCommandRunning {
         process.currentDirectoryURL = workingDirectory
 
         let standardInput = Pipe()
-        let standardError = Pipe()
+        let standardErrorURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("stderr")
+        FileManager.default.createFile(atPath: standardErrorURL.path, contents: nil)
+        let standardError = try FileHandle(forWritingTo: standardErrorURL)
+        defer {
+            try? standardError.close()
+            try? FileManager.default.removeItem(at: standardErrorURL)
+        }
+
         process.standardInput = standardInput
         process.standardError = standardError
 
-        try process.run()
-        try standardInput.fileHandleForWriting.write(contentsOf: Data(prompt.utf8))
-        try standardInput.fileHandleForWriting.close()
-        process.waitUntilExit()
+        let processState = ProcessTerminationState()
+        process.terminationHandler = { process in
+            processState.finish(terminationStatus: process.terminationStatus)
+        }
 
-        let errorData = standardError.fileHandleForReading.readDataToEndOfFile()
+        let terminationStatus = try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            try process.run()
+            processState.setProcess(process)
+            do {
+                try standardInput.fileHandleForWriting.write(contentsOf: Data(prompt.utf8))
+                try standardInput.fileHandleForWriting.close()
+            } catch {
+                processState.terminate()
+                _ = await processState.waitForTermination()
+                throw error
+            }
+
+            let terminationStatus = await processState.waitForTermination()
+            if processState.wasCancelled {
+                throw CancellationError()
+            }
+            return terminationStatus
+        } onCancel: {
+            processState.cancel()
+        }
+
+        try standardError.close()
+        let errorData = try Data(contentsOf: standardErrorURL)
         let errorText = String(decoding: errorData, as: UTF8.self)
-        return CodexCommandResult(terminationStatus: process.terminationStatus, standardError: errorText)
+        return CodexCommandResult(terminationStatus: terminationStatus, standardError: errorText)
+    }
+}
+
+private final class ProcessTerminationState: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "ProcessTerminationState")
+    private var process: Process?
+    private var continuation: CheckedContinuation<Int32, Never>?
+    private var terminationStatus: Int32?
+    private var isCancelled = false
+
+    var wasCancelled: Bool {
+        queue.sync { isCancelled }
+    }
+
+    func setProcess(_ process: Process) {
+        let shouldTerminate = queue.sync {
+            self.process = process
+            return isCancelled
+        }
+        if shouldTerminate, process.isRunning {
+            process.terminate()
+        }
+    }
+
+    func waitForTermination() async -> Int32 {
+        await withCheckedContinuation { continuation in
+            let status: Int32? = queue.sync {
+                if let terminationStatus {
+                    return terminationStatus
+                }
+                self.continuation = continuation
+                return nil
+            }
+            if let status {
+                continuation.resume(returning: status)
+            }
+        }
+    }
+
+    func finish(terminationStatus: Int32) {
+        let continuation = queue.sync {
+            guard self.terminationStatus == nil else {
+                return nil as CheckedContinuation<Int32, Never>?
+            }
+            self.terminationStatus = terminationStatus
+            let continuation = self.continuation
+            self.continuation = nil
+            self.process = nil
+            return continuation
+        }
+        continuation?.resume(returning: terminationStatus)
+    }
+
+    func cancel() {
+        let process = queue.sync {
+            isCancelled = true
+            return self.process
+        }
+        if process?.isRunning == true {
+            process?.terminate()
+        }
+    }
+
+    func terminate() {
+        let process = queue.sync { self.process }
+        if process?.isRunning == true {
+            process?.terminate()
+        }
     }
 }

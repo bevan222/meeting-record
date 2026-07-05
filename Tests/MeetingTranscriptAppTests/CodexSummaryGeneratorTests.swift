@@ -55,9 +55,48 @@ final class CodexSummaryGeneratorTests: XCTestCase {
         }
     }
 
+    func testProcessRunnerTerminatesProcessWhenTaskIsCancelled() async throws {
+        let scriptURL = try Self.makeExecutableScript("""
+        #!/bin/sh
+        read input
+        sleep 5
+        echo "$input" > "$1"
+        """)
+        let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("md")
+        let runner = ProcessCodexCommandRunner()
+        let start = Date()
+
+        let task = Task {
+            try await runner.runCodex(
+                executableURL: scriptURL,
+                arguments: [outputURL.path],
+                workingDirectory: FileManager.default.temporaryDirectory,
+                outputFileURL: outputURL,
+                prompt: "prompt"
+            )
+        }
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+        task.cancel()
+
+        do {
+            _ = try await task.value
+            XCTFail("Expected cancellation")
+        } catch is CancellationError {
+            XCTAssertLessThan(Date().timeIntervalSince(start), 2)
+        }
+    }
+
     private static func makeExecutableFile() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try Data().write(to: url)
+        return url
+    }
+
+    private static func makeExecutableScript(_ contents: String) throws -> URL {
+        let url = try makeExecutableFile()
+        try contents.write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
         return url
     }
 
