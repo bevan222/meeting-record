@@ -21,8 +21,8 @@ enum CodexSummaryError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .executableMissing(let path):
-            return "Codex CLI was not found at \(path)."
+        case .executableMissing(let checkedPaths):
+            return "Codex CLI was not found. Checked: \(checkedPaths)."
         case .commandFailed(let standardError):
             let trimmedError = standardError.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmedError.isEmpty {
@@ -36,21 +36,33 @@ enum CodexSummaryError: LocalizedError, Equatable {
 }
 
 struct CodexCLISummaryGenerator: CodexSummaryGenerating {
-    private let executableURL: URL
+    private static let defaultExecutableURLs = [
+        URL(fileURLWithPath: "/Applications/ChatGPT.app/Contents/Resources/codex"),
+        URL(fileURLWithPath: "/Applications/Codex.app/Contents/Resources/codex")
+    ]
+
+    private let executableURLs: [URL]
     private let commandRunner: any CodexCommandRunning
 
     init(
-        executableURL: URL = URL(fileURLWithPath: "/Applications/Codex.app/Contents/Resources/codex"),
+        executableURLs: [URL] = Self.defaultExecutableURLs,
         commandRunner: any CodexCommandRunning = ProcessCodexCommandRunner()
     ) {
-        self.executableURL = executableURL
+        self.executableURLs = executableURLs
         self.commandRunner = commandRunner
+    }
+
+    init(
+        executableURL: URL,
+        commandRunner: any CodexCommandRunning = ProcessCodexCommandRunner()
+    ) {
+        self.init(executableURLs: [executableURL], commandRunner: commandRunner)
     }
 
     func generateSummary(for document: TranscriptDocument, meetingDirectory: URL) async throws -> String {
         let fileManager = FileManager.default
-        guard fileManager.fileExists(atPath: executableURL.path) else {
-            throw CodexSummaryError.executableMissing(executableURL.path)
+        guard let executableURL = executableURLs.first(where: { fileManager.fileExists(atPath: $0.path) }) else {
+            throw CodexSummaryError.executableMissing(executableURLs.map(\.path).joined(separator: ", "))
         }
 
         let outputFileURL = fileManager.temporaryDirectory

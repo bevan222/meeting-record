@@ -3,6 +3,54 @@ import XCTest
 @testable import MeetingTranscriptCore
 
 final class CodexSummaryGeneratorTests: XCTestCase {
+    func testGeneratorUsesNextCodexExecutableWhenFirstCandidateIsMissing() async throws {
+        let missingURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let executableURL = try Self.makeExecutableFile()
+        let runner = FakeCodexCommandRunner { call in
+            guard call.executableURL == executableURL else {
+                throw TestError.unexpectedExecutable(call.executableURL.path)
+            }
+            try "# 摘要".write(to: call.outputFileURL, atomically: true, encoding: .utf8)
+            return CodexCommandResult(terminationStatus: 0, standardError: "")
+        }
+        let generator = CodexCLISummaryGenerator(
+            executableURLs: [missingURL, executableURL],
+            commandRunner: runner
+        )
+
+        let summary = try await generator.generateSummary(
+            for: Self.sampleDocument(),
+            meetingDirectory: URL(fileURLWithPath: "/tmp/meeting")
+        )
+
+        XCTAssertEqual(summary, "# 摘要")
+    }
+
+    func testGeneratorListsCheckedPathsWhenNoCodexExecutableExists() async throws {
+        let firstURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let secondURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let generator = CodexCLISummaryGenerator(
+            executableURLs: [firstURL, secondURL],
+            commandRunner: FakeCodexCommandRunner { _ in
+                XCTFail("The command runner should not run without an executable.")
+                return CodexCommandResult(terminationStatus: 0, standardError: "")
+            }
+        )
+
+        do {
+            _ = try await generator.generateSummary(
+                for: Self.sampleDocument(),
+                meetingDirectory: URL(fileURLWithPath: "/tmp/meeting")
+            )
+            XCTFail("Expected missing executable failure")
+        } catch {
+            XCTAssertEqual(
+                error.localizedDescription,
+                "Codex CLI was not found. Checked: \(firstURL.path), \(secondURL.path)."
+            )
+        }
+    }
+
     func testGeneratorSendsTraditionalChinesePromptAndTranscriptJSONToCodexExec() async throws {
         let executableURL = try Self.makeExecutableFile()
         let runner = FakeCodexCommandRunner { call in
@@ -116,6 +164,10 @@ final class CodexSummaryGeneratorTests: XCTestCase {
             segments: [TranscriptSegment(id: "seg_0001", start: 3, end: 8, speakerId: "speaker_1", text: "今天先確認 SIT 測試範圍。", confidence: nil)]
         )
     }
+}
+
+private enum TestError: Error {
+    case unexpectedExecutable(String)
 }
 
 private final class FakeCodexCommandRunner: CodexCommandRunning, @unchecked Sendable {
