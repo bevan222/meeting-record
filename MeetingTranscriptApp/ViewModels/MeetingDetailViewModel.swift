@@ -99,7 +99,9 @@ final class MeetingDetailViewModel: ObservableObject {
         guard let document else { return }
 
         do {
-            try repository.saveMarkdown(markdownExporter.export(document), meetingId: document.meeting.id)
+            let markdown = markdownExporter.export(document)
+            try repository.saveMarkdown(markdown, meetingId: document.meeting.id)
+            try repository.exportMarkdown(markdown, meeting: document.meeting)
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -109,7 +111,14 @@ final class MeetingDetailViewModel: ObservableObject {
     func exportJSON() {
         guard let document else { return }
 
-        save(document)
+        guard save(document) else { return }
+
+        do {
+            try repository.exportJSON(document)
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     func meetingFolderURL() -> URL? {

@@ -57,6 +57,22 @@ public struct FileMeetingRepository: Sendable {
         try markdown.write(to: markdownURL, atomically: true, encoding: .utf8)
     }
 
+    @discardableResult
+    public func exportJSON(_ document: TranscriptDocument) throws -> URL {
+        let directory = try createMeetingDirectory(meetingId: document.meeting.id)
+        let exportURL = directory.appendingPathComponent(Self.exportFilename(for: document.meeting, pathExtension: "json"))
+        try JSONEncoder.transcriptEncoder.encode(document).write(to: exportURL, options: .atomic)
+        return exportURL
+    }
+
+    @discardableResult
+    public func exportMarkdown(_ markdown: String, meeting: Meeting) throws -> URL {
+        let directory = try createMeetingDirectory(meetingId: meeting.id)
+        let exportURL = directory.appendingPathComponent(Self.exportFilename(for: meeting, pathExtension: "md"))
+        try markdown.write(to: exportURL, atomically: true, encoding: .utf8)
+        return exportURL
+    }
+
     public func saveSummary(_ summary: String, meetingId: String) throws {
         let directory = try createMeetingDirectory(meetingId: meetingId)
         let summaryURL = directory.appendingPathComponent("summary.md")
@@ -116,6 +132,23 @@ public struct FileMeetingRepository: Sendable {
             throw FileMeetingRepositoryError.invalidMeetingId(meetingId)
         }
         return meetingId
+    }
+
+    private static func exportFilename(for meeting: Meeting, pathExtension: String) -> String {
+        let invalidCharacters = CharacterSet(charactersIn: "/:\\").union(.controlCharacters)
+        let sanitizedTitle = meeting.title.unicodeScalars
+            .map { invalidCharacters.contains($0) ? "_" : String($0) }
+            .joined()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = sanitizedTitle.isEmpty ? "Untitled Meeting" : sanitizedTitle
+
+        let dateFormatter = DateFormatter()
+        dateFormatter.calendar = Calendar(identifier: .gregorian)
+        dateFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dateFormatter.timeZone = .current
+        dateFormatter.dateFormat = "yyyyMMdd"
+
+        return "\(title)_\(dateFormatter.string(from: meeting.recordedAt)).\(pathExtension)"
     }
 
     private static func isAllowedStorageIDScalar(_ scalar: Unicode.Scalar) -> Bool {

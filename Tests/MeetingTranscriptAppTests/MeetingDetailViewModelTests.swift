@@ -4,6 +4,53 @@ import XCTest
 
 @MainActor
 final class MeetingDetailViewModelTests: XCTestCase {
+    func testExportJSONWritesNamedCopyUsingMeetingTitleAndRecordedDate() throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let document = Self.sampleDocument()
+        try repository.save(document)
+        let viewModel = MeetingDetailViewModel(
+            repository: repository,
+            markdownExporter: MarkdownTranscriptExporter(),
+            summaryGenerator: FakeSummaryGenerator(mode: .success(""))
+        )
+
+        viewModel.load(meetingId: document.meeting.id)
+        viewModel.exportJSON()
+
+        let exportURL = root
+            .appendingPathComponent(document.meeting.id)
+            .appendingPathComponent("TGB SIT 進度會議_20260704.json")
+        let exportedData = try Data(contentsOf: exportURL)
+        let exportedDocument = try JSONDecoder.transcriptDecoder.decode(TranscriptDocument.self, from: exportedData)
+
+        XCTAssertEqual(exportedDocument, document)
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
+    func testExportMarkdownSanitizesTitleInNamedCopy() throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let document = Self.sampleDocument(title: "TGB/SIT:進度會議")
+        try repository.save(document)
+        let viewModel = MeetingDetailViewModel(
+            repository: repository,
+            markdownExporter: MarkdownTranscriptExporter(),
+            summaryGenerator: FakeSummaryGenerator(mode: .success(""))
+        )
+
+        viewModel.load(meetingId: document.meeting.id)
+        viewModel.exportMarkdown()
+
+        let exportURL = root
+            .appendingPathComponent(document.meeting.id)
+            .appendingPathComponent("TGB_SIT_進度會議_20260704.md")
+        let markdown = try String(contentsOf: exportURL, encoding: .utf8)
+
+        XCTAssertTrue(markdown.contains("# TGB/SIT:進度會議逐字稿"))
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
     func testUpdateMeetingTitlePersistsTranscriptMetadataAndMarkdown() throws {
         let root = try Self.makeTemporaryRoot()
         let repository = FileMeetingRepository(rootDirectory: root)
