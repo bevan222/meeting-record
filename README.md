@@ -1,4 +1,4 @@
-# MeetingTranscriptApp
+# Meet Note
 
 This is a local-only SwiftUI macOS app for recording a meeting, producing a transcript, assigning speaker labels, renaming speakers, and exporting the result. Audio and transcript files stay on the local machine under the app's Application Support directory.
 
@@ -23,10 +23,10 @@ scripts/build-macos-app.sh
 Then open it:
 
 ```sh
-open .build/app/MeetingTranscriptApp.app
+open ".build/app/Meet Note.app"
 ```
 
-The bundle script builds the debug executable, creates `.build/app/MeetingTranscriptApp.app`, copies the app `Info.plist`, signs the bundle with the included entitlements, and verifies the signature.
+The bundle script builds the debug executable, creates `.build/app/Meet Note.app`, copies the app `Info.plist`, signs the bundle with the included entitlements, and verifies the signature.
 
 The debug app is signed without macOS App Sandbox. The Codex summary action launches the local Codex CLI, which needs access to the user's Codex auth and state under `~/.codex`.
 
@@ -46,7 +46,7 @@ The `用 Codex 整理摘要` action sends the selected meeting's `transcript.jso
 
 ## Runtime Storage
 
-Meetings are saved locally in one independent directory per recording under:
+Meetings are saved locally in one independent directory per recording. For compatibility with recordings created before the Meet Note branding update, the app continues to use its original internal storage directory:
 
 ```text
 ~/Library/Application Support/MeetingTranscriptApp/Meetings
