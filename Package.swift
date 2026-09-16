@@ -24,7 +24,7 @@ let package = Package(
                 .product(name: "SpeakerKit", package: "argmax-oss-swift")
             ],
             path: "MeetingTranscriptApp",
-            exclude: ["Resources/Info.plist", "Resources/MeetingTranscriptApp.entitlements"]
+            exclude: ["Resources"]
         ),
         .testTarget(
             name: "MeetingTranscriptCoreTests",

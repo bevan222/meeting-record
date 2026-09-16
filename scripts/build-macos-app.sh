@@ -12,7 +12,10 @@ EXECUTABLE=".build/debug/MeetingTranscriptApp"
 APP_DIR=".build/app/MeetingTranscriptApp.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
+APP_RESOURCES_DIR="$CONTENTS_DIR/Resources"
 RESOURCES_DIR="MeetingTranscriptApp/Resources"
+ASSET_CATALOG="$RESOURCES_DIR/Assets.xcassets"
+ASSET_INFO_PLIST=".build/app/assetcatalog-info.plist"
 
 if [[ ! -x "$EXECUTABLE" ]]; then
     echo "Missing executable: $EXECUTABLE" >&2
@@ -20,15 +23,25 @@ if [[ ! -x "$EXECUTABLE" ]]; then
 fi
 
 rm -rf "$APP_DIR"
-mkdir -p "$MACOS_DIR"
+mkdir -p "$MACOS_DIR" "$APP_RESOURCES_DIR"
 
 cp "$EXECUTABLE" "$MACOS_DIR/MeetingTranscriptApp"
 cp "$RESOURCES_DIR/Info.plist" "$CONTENTS_DIR/Info.plist"
+rm -f "$ASSET_INFO_PLIST"
+xcrun actool \
+    --compile "$APP_RESOURCES_DIR" \
+    --platform macosx \
+    --minimum-deployment-target 14.0 \
+    --app-icon AppIcon \
+    --output-partial-info-plist "$ASSET_INFO_PLIST" \
+    "$ASSET_CATALOG"
 
 xattr -cr "$APP_DIR"
 for _ in 1 2 3 4 5 6 7 8 9 10; do
     xattr -d com.apple.FinderInfo "$APP_DIR" 2>/dev/null || true
-    if ! xattr -p com.apple.FinderInfo "$APP_DIR" >/dev/null 2>&1; then
+    xattr -d 'com.apple.fileprovider.fpfs#P' "$APP_DIR" 2>/dev/null || true
+    if ! xattr -p com.apple.FinderInfo "$APP_DIR" >/dev/null 2>&1 \
+        && ! xattr -p 'com.apple.fileprovider.fpfs#P' "$APP_DIR" >/dev/null 2>&1; then
         break
     fi
     sleep 0.3
@@ -42,6 +55,7 @@ codesign \
 
 for _ in 1 2 3 4 5 6 7 8 9 10; do
     xattr -d com.apple.FinderInfo "$APP_DIR" 2>/dev/null || true
+    xattr -d 'com.apple.fileprovider.fpfs#P' "$APP_DIR" 2>/dev/null || true
     if codesign --verify --deep --strict --verbose=4 "$APP_DIR"; then
         echo "Built app: $REPO_ROOT/$APP_DIR"
         echo "Open with: open $APP_DIR"
