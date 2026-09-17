@@ -1,9 +1,139 @@
+import Darwin
 import XCTest
 @testable import MeetingTranscriptApp
 @testable import MeetingTranscriptCore
 
 @MainActor
 final class MeetingDetailViewModelTests: XCTestCase {
+    func testAnotherProviderCanRunAfterForcedCancellationConfirmsProcessExit() async throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let document = Self.sampleDocument()
+        try repository.save(document)
+        let fixture = try IgnoringTerminationSummaryGenerator()
+        defer { fixture.cleanUp() }
+        let viewModel = MeetingDetailViewModel(
+            repository: repository,
+            markdownExporter: MarkdownTranscriptExporter(),
+            codexSummaryGenerator: fixture,
+            claudeSummaryGenerator: FakeSummaryGenerator(mode: .success("# New summary"))
+        )
+        viewModel.load(meetingId: document.meeting.id)
+        let task = Task { await viewModel.generateSummary(using: .codex) }
+        defer { task.cancel() }
+        let pid = try await fixture.waitUntilRunning()
+
+        viewModel.load(meetingId: document.meeting.id)
+        XCTAssertEqual(viewModel.activeSummaryProvider, .codex)
+        XCTAssertFalse(viewModel.canGenerateSummary)
+        await viewModel.generateSummary(using: .claude)
+        XCTAssertNil(viewModel.summaryMarkdown)
+
+        await waitForSummaryTask(task)
+        XCTAssertEqual(kill(pid, 0), -1)
+        XCTAssertEqual(errno, ESRCH)
+        XCTAssertTrue(viewModel.canGenerateSummary)
+        await viewModel.generateSummary(using: .claude)
+        XCTAssertEqual(viewModel.summaryMarkdown, "# New summary")
+        XCTAssertEqual(try repository.loadSummary(meetingId: document.meeting.id), "# New summary")
+    }
+
+    func testSuccessfulSegmentEditInvalidatesActiveSummary() async throws {
+        try await assertSummaryAfterEdit(invalidated: true) { viewModel in
+            viewModel.updateSegmentText(segmentId: "seg_0001", text: "Corrected transcript")
+        }
+    }
+
+    func testSuccessfulSpeakerRenameInvalidatesActiveSummary() async throws {
+        try await assertSummaryAfterEdit(invalidated: true) { viewModel in
+            viewModel.renameSpeaker(speakerId: "speaker_1", name: "Alice")
+        }
+    }
+
+    func testSuccessfulTitleChangeInvalidatesActiveSummary() async throws {
+        try await assertSummaryAfterEdit(invalidated: true) { viewModel in
+            XCTAssertEqual(viewModel.updateMeetingTitle("Revised meeting"), "Revised meeting")
+        }
+    }
+
+    func testNoOpEditsDoNotInvalidateActiveSummary() async throws {
+        try await assertSummaryAfterEdit(invalidated: false) { viewModel in
+            let document = viewModel.document!
+            viewModel.updateSegmentText(segmentId: "seg_0001", text: document.segments[0].text)
+            viewModel.updateSegmentText(segmentId: "missing", text: "Not an edit")
+            viewModel.renameSpeaker(speakerId: "speaker_1", name: "  ")
+            viewModel.renameSpeaker(speakerId: "missing", name: "Not an edit")
+            viewModel.updateMeetingTitle("  \(document.meeting.title)  ")
+        }
+    }
+
+    func testExportsDoNotInvalidateActiveSummary() async throws {
+        try await assertSummaryAfterEdit(invalidated: false) { viewModel in
+            viewModel.exportJSON()
+            viewModel.exportMarkdown()
+        }
+    }
+
+    func testFailedEditsDoNotInvalidateActiveSummary() async throws {
+        try await assertSummaryAfterEdit(invalidated: false) { viewModel in
+            let directory = try XCTUnwrap(viewModel.meetingFolderURL())
+            let transcriptURL = directory.appendingPathComponent("transcript.json")
+            let originalData = try Data(contentsOf: transcriptURL)
+            try FileManager.default.removeItem(at: transcriptURL)
+            try FileManager.default.createDirectory(at: transcriptURL, withIntermediateDirectories: false)
+            defer {
+                try? FileManager.default.removeItem(at: transcriptURL)
+                try? originalData.write(to: transcriptURL)
+            }
+            let originalDocument = viewModel.document
+            viewModel.updateSegmentText(segmentId: "seg_0001", text: "Cannot save")
+            XCTAssertNotNil(viewModel.errorMessage)
+            viewModel.renameSpeaker(speakerId: "speaker_1", name: "Cannot save")
+            XCTAssertNotNil(viewModel.errorMessage)
+            XCTAssertNil(viewModel.updateMeetingTitle("Cannot save"))
+            XCTAssertNotNil(viewModel.errorMessage)
+            XCTAssertEqual(viewModel.document, originalDocument)
+        }
+    }
+
+    private func assertSummaryAfterEdit(
+        invalidated: Bool,
+        edit: (MeetingDetailViewModel) throws -> Void
+    ) async throws {
+        for provider in [SummaryProvider.codex, .claude] {
+            let root = try Self.makeTemporaryRoot()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let repository = FileMeetingRepository(rootDirectory: root)
+            let document = Self.sampleDocument()
+            try repository.save(document)
+            try repository.saveSummary("# Existing summary", meetingId: document.meeting.id)
+            let generator = SuspendedSummaryGenerator()
+            let viewModel = MeetingDetailViewModel(
+                repository: repository,
+                markdownExporter: MarkdownTranscriptExporter(),
+                summaryGenerator: generator
+            )
+            viewModel.load(meetingId: document.meeting.id)
+            let task = Task { await viewModel.generateSummary(using: provider) }
+            defer {
+                task.cancel()
+                generator.resume(throwing: CancellationError())
+            }
+            await generator.waitUntilRequested()
+            try edit(viewModel)
+            XCTAssertEqual(viewModel.activeSummaryProvider, provider)
+            XCTAssertFalse(viewModel.canGenerateSummary)
+            generator.resume(with: "# Generated summary")
+            await waitForSummaryTask(task)
+
+            let expected = invalidated ? "# Existing summary" : "# Generated summary"
+            XCTAssertEqual(try repository.loadSummary(meetingId: document.meeting.id), expected)
+            XCTAssertEqual(viewModel.summaryMarkdown, expected)
+            XCTAssertTrue(viewModel.canGenerateSummary)
+            XCTAssertNil(viewModel.errorMessage)
+        }
+    }
+
     func testExportJSONWritesNamedCopyUsingMeetingTitleAndRecordedDate() throws {
         let root = try Self.makeTemporaryRoot()
         let repository = FileMeetingRepository(rootDirectory: root)
@@ -180,7 +310,7 @@ final class MeetingDetailViewModelTests: XCTestCase {
         XCTAssertEqual(claude.requestedDocuments.count, 0)
 
         codex.resume(with: "# Codex 摘要")
-        await task.value
+        await waitForSummaryTask(task)
 
         XCTAssertNil(viewModel.activeSummaryProvider)
     }
@@ -225,7 +355,7 @@ final class MeetingDetailViewModelTests: XCTestCase {
         await generator.waitUntilRequested()
         task.cancel()
         generator.resume(with: "# 新摘要")
-        await task.value
+        await waitForSummaryTask(task)
 
         XCTAssertEqual(try repository.loadSummary(meetingId: document.meeting.id), "# 舊摘要")
         XCTAssertEqual(viewModel.summaryMarkdown, "# 舊摘要")
@@ -238,24 +368,24 @@ final class MeetingDetailViewModelTests: XCTestCase {
         let document = Self.sampleDocument()
         try repository.save(document)
         try repository.saveSummary("# 舊摘要", meetingId: document.meeting.id)
-        let generator = SuspendedSummaryGenerator()
+        let generator = FakeSummaryGenerator(mode: .success("# Stale summary"))
+        let gate = SummaryResultPublicationGate()
         let viewModel = MeetingDetailViewModel(
             repository: repository,
             markdownExporter: MarkdownTranscriptExporter(),
-            summaryGenerator: generator
+            codexSummaryGenerator: generator,
+            claudeSummaryGenerator: generator,
+            summaryResult: gate.value
         )
         let meetingID = document.meeting.id
         viewModel.load(meetingId: meetingID)
         let task = Task {
             await viewModel.generateSummary()
         }
-        await generator.waitUntilRequested()
-        generator.resume(with: "# 過期摘要") { [weak viewModel] in
-            Task { @MainActor in
-                viewModel?.load(meetingId: meetingID)
-            }
-        }
-        await task.value
+        await gate.waitUntilCompleted()
+        viewModel.load(meetingId: meetingID)
+        gate.allowPublication.fulfill()
+        await waitForSummaryTask(task)
 
         XCTAssertEqual(try repository.loadSummary(meetingId: meetingID), "# 舊摘要")
         XCTAssertEqual(viewModel.summaryMarkdown, "# 舊摘要")
@@ -270,25 +400,24 @@ final class MeetingDetailViewModelTests: XCTestCase {
         try repository.save(meetingA)
         try repository.save(meetingB)
         try repository.saveSummary("# A 舊摘要", meetingId: meetingA.meeting.id)
-        let generator = SuspendedSummaryGenerator()
+        let generator = FakeSummaryGenerator(mode: .success("# Stale summary"))
+        let gate = SummaryResultPublicationGate()
         let viewModel = MeetingDetailViewModel(
             repository: repository,
             markdownExporter: MarkdownTranscriptExporter(),
-            summaryGenerator: generator
+            codexSummaryGenerator: generator,
+            claudeSummaryGenerator: generator,
+            summaryResult: gate.value
         )
         viewModel.load(meetingId: meetingA.meeting.id)
         let task = Task {
             await viewModel.generateSummary()
         }
-        await generator.waitUntilRequested()
-        generator.resume(with: "# A 過期摘要") { [weak viewModel] in
-            Task { @MainActor in
-                viewModel?.load(meetingId: meetingA.meeting.id)
-                viewModel?.load(meetingId: meetingB.meeting.id)
-                viewModel?.load(meetingId: meetingA.meeting.id)
-            }
-        }
-        await task.value
+        await gate.waitUntilCompleted()
+        viewModel.load(meetingId: meetingB.meeting.id)
+        viewModel.load(meetingId: meetingA.meeting.id)
+        gate.allowPublication.fulfill()
+        await waitForSummaryTask(task)
 
         XCTAssertEqual(try repository.loadSummary(meetingId: meetingA.meeting.id), "# A 舊摘要")
         XCTAssertEqual(viewModel.document?.meeting.id, meetingA.meeting.id)
@@ -325,7 +454,7 @@ final class MeetingDetailViewModelTests: XCTestCase {
         XCTAssertEqual(claude.requestedDocuments.count, 0)
 
         codex.resume(with: "# Codex 摘要")
-        await task.value
+        await waitForSummaryTask(task)
         await viewModel.generateSummary(using: .claude)
 
         XCTAssertEqual(claude.requestedDocuments.count, 1)
@@ -351,7 +480,7 @@ final class MeetingDetailViewModelTests: XCTestCase {
         await generator.waitUntilRequested()
         task.cancel()
         generator.resume(throwing: TestSummaryError.failed)
-        await task.value
+        await waitForSummaryTask(task)
 
         XCTAssertEqual(try repository.loadSummary(meetingId: document.meeting.id), "# 舊摘要")
         XCTAssertEqual(viewModel.summaryMarkdown, "# 舊摘要")
@@ -381,7 +510,7 @@ final class MeetingDetailViewModelTests: XCTestCase {
         viewModel.load(meetingId: meetingB.meeting.id)
         viewModel.load(meetingId: meetingA.meeting.id)
         generator.resume(throwing: TestSummaryError.failed)
-        await task.value
+        await waitForSummaryTask(task)
 
         XCTAssertEqual(viewModel.document?.meeting.id, meetingA.meeting.id)
         XCTAssertNil(viewModel.errorMessage)
@@ -431,7 +560,7 @@ final class MeetingDetailViewModelTests: XCTestCase {
 
         viewModel.load(meetingId: meetingB.meeting.id)
         generator.resume(with: "# A 摘要")
-        await task.value
+        await waitForSummaryTask(task)
 
         XCTAssertNil(try repository.loadSummary(meetingId: meetingA.meeting.id))
         XCTAssertEqual(viewModel.document?.meeting.id, meetingB.meeting.id)
@@ -487,7 +616,7 @@ final class MeetingDetailViewModelTests: XCTestCase {
 
 private final class SuspendedSummaryGenerator: CodexSummaryGenerating, @unchecked Sendable {
     private let lock = NSLock()
-    private var requestedContinuation: CheckedContinuation<Void, Never>?
+    private let requested = XCTestExpectation(description: "summary requested")
     private var summaryContinuation: CheckedContinuation<String, Error>?
     private var requestedDocumentsStorage: [TranscriptDocument] = []
 
@@ -502,35 +631,26 @@ private final class SuspendedSummaryGenerator: CodexSummaryGenerating, @unchecke
             lock.lock()
             requestedDocumentsStorage.append(document)
             summaryContinuation = continuation
-            let requestedContinuation = requestedContinuation
-            self.requestedContinuation = nil
             lock.unlock()
-
-            requestedContinuation?.resume()
-        }
-    }
-
-    func waitUntilRequested() async {
-        await withCheckedContinuation { continuation in
-            lock.lock()
-            if requestedDocumentsStorage.isEmpty {
-                requestedContinuation = continuation
-                lock.unlock()
-            } else {
-                lock.unlock()
-                continuation.resume()
+            requested.fulfill()
+            DispatchQueue.global().asyncAfter(deadline: .now() + 3) { [self] in
+                resume(throwing: SummaryTestTimeout.expired)
             }
         }
     }
 
-    func resume(with summary: String, afterResuming: @escaping @Sendable () -> Void = {}) {
+    func waitUntilRequested() async {
+        let result = await XCTWaiter.fulfillment(of: [requested], timeout: 2)
+        XCTAssertEqual(result, .completed)
+    }
+
+    func resume(with summary: String) {
         lock.lock()
         let summaryContinuation = summaryContinuation
         self.summaryContinuation = nil
         lock.unlock()
 
         summaryContinuation?.resume(returning: summary)
-        afterResuming()
     }
 
     func resume(throwing error: Error) {
@@ -540,6 +660,29 @@ private final class SuspendedSummaryGenerator: CodexSummaryGenerating, @unchecke
         lock.unlock()
 
         summaryContinuation?.resume(throwing: error)
+    }
+}
+
+// The generation task has completed before the gate opens. Tests can
+// invalidate it synchronously, without racing a separately scheduled MainActor job.
+private final class SummaryResultPublicationGate: @unchecked Sendable {
+    private let completed = XCTestExpectation(description: "provider result completed")
+    let allowPublication = XCTestExpectation(description: "allow completed result publication")
+
+    func value(of task: Task<String, Error>) async throws -> String {
+        let summary = try await task.value
+        completed.fulfill()
+        let result = await XCTWaiter.fulfillment(of: [allowPublication], timeout: 2)
+        guard result == .completed else {
+            XCTFail("Publication gate timed out")
+            throw SummaryTestTimeout.expired
+        }
+        return summary
+    }
+
+    func waitUntilCompleted() async {
+        let result = await XCTWaiter.fulfillment(of: [completed], timeout: 2)
+        XCTAssertEqual(result, .completed)
     }
 }
 

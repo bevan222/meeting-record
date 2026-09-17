@@ -278,6 +278,10 @@ struct ProcessSummaryCommandRunner: SummaryCommandRunning {
         process.currentDirectoryURL = workingDirectory
 
         let standardInput = Pipe()
+        defer {
+            try? standardInput.fileHandleForWriting.close()
+            try? standardInput.fileHandleForReading.close()
+        }
         let standardOutputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension("stdout")
@@ -309,7 +313,7 @@ struct ProcessSummaryCommandRunner: SummaryCommandRunning {
             try process.run()
             processState.setProcess(process)
             do {
-                try standardInput.fileHandleForWriting.write(contentsOf: Data(prompt.utf8))
+                try await Self.writePrompt(prompt, to: standardInput.fileHandleForWriting)
                 try standardInput.fileHandleForWriting.close()
             } catch {
                 processState.terminate()
@@ -341,6 +345,34 @@ struct ProcessSummaryCommandRunner: SummaryCommandRunning {
             standardError: errorText
         )
     }
+
+    private static func writePrompt(_ prompt: String, to handle: FileHandle) async throws {
+        let descriptor = handle.fileDescriptor
+        let flags = fcntl(descriptor, F_GETFL)
+        guard flags >= 0, fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) != -1 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+
+        let data = Data(prompt.utf8)
+        var offset = 0
+        while offset < data.count {
+            try Task.checkCancellation()
+            let written = data.withUnsafeBytes { bytes in
+                Darwin.write(descriptor, bytes.baseAddress!.advanced(by: offset), min(65_536, data.count - offset))
+            }
+            if written > 0 {
+                offset += written
+            } else if written == -1 && errno == EINTR {
+                continue
+            } else if written == -1 && errno == EAGAIN {
+                // A descendant may retain stdin after the CLI exits. Never wait
+                // for pipe capacity without giving cancellation a chance to run.
+                try await Task.sleep(for: .milliseconds(10))
+            } else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+        }
+    }
 }
 
 private final class ProcessTerminationState: @unchecked Sendable {
@@ -349,18 +381,19 @@ private final class ProcessTerminationState: @unchecked Sendable {
     private var continuation: CheckedContinuation<Int32, Never>?
     private var terminationStatus: Int32?
     private var isCancelled = false
+    private var isTerminating = false
 
     var wasCancelled: Bool {
         queue.sync { isCancelled }
     }
 
     func setProcess(_ process: Process) {
-        let shouldTerminate = queue.sync {
+        queue.sync {
+            guard terminationStatus == nil else { return }
             self.process = process
-            return isCancelled
-        }
-        if shouldTerminate, process.isRunning {
-            process.terminate()
+            if isCancelled {
+                terminateLocked()
+            }
         }
     }
 
@@ -394,19 +427,29 @@ private final class ProcessTerminationState: @unchecked Sendable {
     }
 
     func cancel() {
-        let process = queue.sync {
+        queue.sync {
             isCancelled = true
-            return self.process
-        }
-        if process?.isRunning == true {
-            process?.terminate()
+            terminateLocked()
         }
     }
 
     func terminate() {
-        let process = queue.sync { self.process }
-        if process?.isRunning == true {
-            process?.terminate()
+        queue.sync { terminateLocked() }
+    }
+
+    private func terminateLocked() {
+        guard !isTerminating, terminationStatus == nil,
+              let process, process.isRunning else { return }
+        isTerminating = true
+        process.terminate()
+        queue.asyncAfter(deadline: .now() + .milliseconds(250)) { [self] in
+            // Meet Note owns and force-kills only the launched CLI process, not
+            // its process group. Descendants are not assumed to remain valid
+            // after their parent/stdio close. Never signal a cached PID after
+            // exit, and let the termination callback alone release the waiter.
+            guard terminationStatus == nil, let process = self.process,
+                  process.isRunning, process.processIdentifier > 0 else { return }
+            _ = kill(process.processIdentifier, SIGKILL)
         }
     }
 }

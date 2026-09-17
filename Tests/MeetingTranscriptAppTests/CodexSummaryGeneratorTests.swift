@@ -1,8 +1,89 @@
+import Darwin
 import XCTest
 @testable import MeetingTranscriptApp
 @testable import MeetingTranscriptCore
 
 final class CodexSummaryGeneratorTests: XCTestCase {
+    func testProcessRunnerDeliversLargePromptWithoutShellInterpretation() async throws {
+        let prompt = String(repeating: "literal $HOME $(exit 1) `exit 1` 'quoted' \n", count: 50_000)
+        let task = Task {
+            try await ProcessSummaryCommandRunner().runSummaryCommand(
+                executableURL: URL(fileURLWithPath: "/bin/cat"),
+                arguments: [],
+                workingDirectory: FileManager.default.temporaryDirectory,
+                prompt: prompt
+            )
+        }
+        defer { task.cancel() }
+        let result = await waitForSummaryTask(task)
+        let output = try XCTUnwrap(result).get()
+        XCTAssertEqual(output.terminationStatus, 0)
+        XCTAssertEqual(output.standardOutput, prompt)
+        XCTAssertEqual(output.standardError, "")
+    }
+
+    func testProcessRunnerForceKillsProcessIgnoringSIGTERM() async throws {
+        try await assertForcedCancellation(prompt: "prompt", useCodex: false)
+    }
+
+    func testCodexProcessRunnerForceKillsProcessIgnoringSIGTERM() async throws {
+        try await assertForcedCancellation(prompt: "prompt", useCodex: true)
+    }
+
+    func testProcessRunnerForceKillsWhileLargeInputIsNotRead() async throws {
+        try await assertForcedCancellation(prompt: String(repeating: "x", count: 2_000_000), useCodex: false)
+    }
+
+    func testProcessRunnerCancellationDoesNotWaitForDescendantHoldingStdin() async throws {
+        try await assertForcedCancellation(
+            prompt: String(repeating: "x", count: 2_000_000),
+            useCodex: false,
+            retainsStdinInDescendant: true
+        )
+    }
+
+    private func assertForcedCancellation(
+        prompt: String,
+        useCodex: Bool,
+        retainsStdinInDescendant: Bool = false
+    ) async throws {
+        let fixture = try IgnoringTerminationSummaryGenerator(retainsStdinInDescendant: retainsStdinInDescendant)
+        defer { fixture.cleanUp() }
+        let task = Task {
+            do {
+                if useCodex {
+                    _ = try await ProcessCodexCommandRunner().runCodex(
+                        executableURL: fixture.executableURL,
+                        arguments: fixture.arguments,
+                        workingDirectory: fixture.directory,
+                        outputFileURL: fixture.directory.appendingPathComponent("output.md"),
+                        prompt: prompt
+                    )
+                } else {
+                    _ = try await ProcessSummaryCommandRunner().runSummaryCommand(
+                        executableURL: fixture.executableURL,
+                        arguments: fixture.arguments,
+                        workingDirectory: fixture.directory,
+                        prompt: prompt
+                    )
+                }
+                XCTFail("Expected CancellationError")
+            } catch is CancellationError {
+            } catch {
+                XCTFail("Expected CancellationError, got \(error)")
+            }
+        }
+        defer { task.cancel() }
+        let pid = try await fixture.waitUntilRunning()
+        XCTAssertEqual(kill(pid, 0), 0)
+        let start = ContinuousClock.now
+        task.cancel()
+        await waitForSummaryTask(task)
+        XCTAssertGreaterThanOrEqual(start.duration(to: .now), .milliseconds(200), "Allow graceful shutdown before SIGKILL")
+        XCTAssertEqual(kill(pid, 0), -1, "Immediate CLI must exit before cancellation completes")
+        XCTAssertEqual(errno, ESRCH)
+    }
+
     func testGeneratorUsesNextCodexExecutableWhenFirstCandidateIsMissing() async throws {
         let missingURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let executableURL = try Self.makeExecutableFile()
@@ -128,12 +209,12 @@ final class CodexSummaryGeneratorTests: XCTestCase {
         try await Task.sleep(nanoseconds: 100_000_000)
         task.cancel()
 
-        do {
-            _ = try await task.value
-            XCTFail("Expected cancellation")
-        } catch is CancellationError {
-            XCTAssertLessThan(Date().timeIntervalSince(start), 2)
+        let result = await waitForSummaryTask(task)
+        guard case .failure(let error) = result else {
+            return XCTFail("Expected cancellation")
         }
+        XCTAssertTrue(error is CancellationError)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 2)
     }
 
     func testClaudeGeneratorUsesNextExistingExecutableWithRequiredArgumentsAndTrimmedStandardOutput() async throws {
@@ -265,12 +346,12 @@ final class CodexSummaryGeneratorTests: XCTestCase {
         try await Task.sleep(nanoseconds: 100_000_000)
         task.cancel()
 
-        do {
-            _ = try await task.value
-            XCTFail("Expected cancellation")
-        } catch is CancellationError {
-            XCTAssertLessThan(Date().timeIntervalSince(start), 2)
+        let result = await waitForSummaryTask(task)
+        guard case .failure(let error) = result else {
+            return XCTFail("Expected cancellation")
         }
+        XCTAssertTrue(error is CancellationError)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 2)
     }
 
     func testProcessRunnerPrefersCancellationWhenInputWriteFailsAfterCancellation() async throws {
@@ -291,11 +372,11 @@ final class CodexSummaryGeneratorTests: XCTestCase {
         try await Task.sleep(nanoseconds: 100_000_000)
         task.cancel()
 
-        do {
-            _ = try await task.value
-            XCTFail("Expected cancellation")
-        } catch is CancellationError {
+        let result = await waitForSummaryTask(task)
+        guard case .failure(let error) = result else {
+            return XCTFail("Expected cancellation")
         }
+        XCTAssertTrue(error is CancellationError)
     }
 
     private static func makeExecutableFile() throws -> URL {

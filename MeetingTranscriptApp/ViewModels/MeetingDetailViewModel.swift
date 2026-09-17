@@ -13,6 +13,7 @@ final class MeetingDetailViewModel: ObservableObject {
     private let markdownExporter: MarkdownTranscriptExporter
     private let codexSummaryGenerator: any SummaryGenerating
     private let claudeSummaryGenerator: any SummaryGenerating
+    private let summaryResult: @Sendable (Task<String, Error>) async throws -> String
     private var summaryTask: Task<String, Error>?
     private var activeSummaryRequestID: UUID?
     private var activeSummaryExecutionID: UUID?
@@ -21,12 +22,14 @@ final class MeetingDetailViewModel: ObservableObject {
         repository: FileMeetingRepository,
         markdownExporter: MarkdownTranscriptExporter,
         codexSummaryGenerator: any SummaryGenerating,
-        claudeSummaryGenerator: any SummaryGenerating
+        claudeSummaryGenerator: any SummaryGenerating,
+        summaryResult: @escaping @Sendable (Task<String, Error>) async throws -> String = { try await $0.value }
     ) {
         self.repository = repository
         self.markdownExporter = markdownExporter
         self.codexSummaryGenerator = codexSummaryGenerator
         self.claudeSummaryGenerator = claudeSummaryGenerator
+        self.summaryResult = summaryResult
     }
 
     convenience init(
@@ -211,7 +214,7 @@ final class MeetingDetailViewModel: ObservableObject {
 
         do {
             let summary = try await withTaskCancellationHandler {
-                try await task.value
+                try await summaryResult(task)
             } onCancel: {
                 task.cancel()
             }
@@ -271,6 +274,9 @@ final class MeetingDetailViewModel: ObservableObject {
     private func save(_ document: TranscriptDocument) -> Bool {
         do {
             try repository.save(document)
+            if self.document != document {
+                cancelActiveSummary()
+            }
             self.document = document
             errorMessage = nil
             return true
