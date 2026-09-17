@@ -8,9 +8,11 @@ cd "$REPO_ROOT"
 
 BUILD_CONFIGURATION="${BUILD_CONFIGURATION:-debug}"
 
-swift build -c "$BUILD_CONFIGURATION" --arch arm64 ${SWIFT_BUILD_FLAGS:-}
+# Xcode's generated SwiftPM accessors support Contents/Resources in signed apps.
+swift build -c "$BUILD_CONFIGURATION" --arch arm64 --build-system xcode ${SWIFT_BUILD_FLAGS:-}
 
-EXECUTABLE=".build/$BUILD_CONFIGURATION/MeetingTranscriptApp"
+BUILD_DIR="$(swift build -c "$BUILD_CONFIGURATION" --arch arm64 --build-system xcode ${SWIFT_BUILD_FLAGS:-} --show-bin-path)"
+EXECUTABLE="$BUILD_DIR/MeetingTranscriptApp"
 APP_DIR=".build/app/Meet Note.app"
 LEGACY_APP_DIR=".build/app/MeetingTranscriptApp.app"
 CONTENTS_DIR="$APP_DIR/Contents"
@@ -30,11 +32,23 @@ if ! lipo -archs "$EXECUTABLE" | tr ' ' '\n' | grep -qx arm64; then
     exit 1
 fi
 
+if [[ ! -d "$BUILD_DIR/swift-transformers_Hub.bundle" ]]; then
+    echo "Missing required SwiftPM resource: $BUILD_DIR/swift-transformers_Hub.bundle" >&2
+    exit 1
+fi
+
 rm -rf "$APP_DIR" "$LEGACY_APP_DIR"
 mkdir -p "$MACOS_DIR" "$APP_RESOURCES_DIR"
 
 cp "$EXECUTABLE" "$MACOS_DIR/MeetingTranscriptApp"
 cp "$RESOURCES_DIR/Info.plist" "$CONTENTS_DIR/Info.plist"
+for resource_bundle in "$BUILD_DIR/"*.bundle; do
+    [[ -d "$resource_bundle" ]] || continue
+    bundle_name="$(basename "$resource_bundle")"
+    ditto "$resource_bundle" "$APP_RESOURCES_DIR/$bundle_name"
+    # SwiftPM resources can be read-only; metadata cleanup needs writable copies.
+    chmod -R u+w "$APP_RESOURCES_DIR/$bundle_name"
+done
 rm -f "$ASSET_INFO_PLIST"
 xcrun actool \
     --compile "$APP_RESOURCES_DIR" \

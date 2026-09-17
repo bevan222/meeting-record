@@ -1,10 +1,19 @@
 # Meet Note
 
-This is a local-only SwiftUI macOS app for recording a meeting, producing a transcript, assigning speaker labels, renaming speakers, and exporting the result. Audio and transcript files stay on the local machine under the app's Application Support directory.
+Meet Note is a SwiftUI macOS app for recording meetings, producing transcripts, assigning and renaming speakers, exporting results, and optionally generating summaries with Codex or Claude. Recordings and transcripts are stored locally under the app's Application Support directory. Transcription and diarization run on device after their models are downloaded; optional summaries can send transcript data to an external provider.
 
 The app attempts to refresh a UI-only live preview every 10 seconds while recording. Preview text is not saved as the final transcript. After recording stops, the app transcribes the saved `audio.m4a` with WhisperKit through the `WhisperKitTranscriptionEngine` adapter, then runs SpeakerKit diarization through `SpeakerKitDiarizationEngine` and merges speaker labels onto transcript segments.
 
+## Install the Internal Release
+
+- Requires an **Apple Silicon Mac (arm64), macOS 14 or later**, microphone permission, and enough storage for recordings and downloaded models. Intel Macs are not supported by this DMG.
+- The release artifact is **`.build/dist/Meet Note.dmg`**. Open the DMG, drag `Meet Note.app` onto `Applications`, eject the image, then launch Meet Note from Applications.
+- This internal build is **ad-hoc signed, not Developer ID signed or Apple-notarized**. A passing signature check is an integrity check, not Apple approval. Only open a copy received from a trusted internal distributor.
+- On first open, try right-clicking Meet Note and choosing **Open**. If macOS still blocks it, attempt launch once, then use **System Settings > Privacy & Security > Open Anyway** and confirm. Managed Macs may require IT approval. Do not disable Gatekeeper globally. See [Apple's instructions for opening trusted apps](https://support.apple.com/en-gb/102445).
+
 ## Build
+
+Source builds require Xcode with the macOS SDK and Swift 6 or later.
 
 Build the Swift package:
 
@@ -26,9 +35,45 @@ Then open it:
 open ".build/app/Meet Note.app"
 ```
 
-The bundle script builds the debug executable, creates `.build/app/Meet Note.app`, copies the app `Info.plist`, signs the bundle with the included entitlements, and verifies the signature.
+The bundle script defaults to Debug/arm64, creates `.build/app/Meet Note.app`, copies the app `Info.plist` and all top-level SwiftPM resource bundles from the selected build output, signs the bundle with the included entitlements, and verifies the signature. `BUILD_CONFIGURATION=release` selects Release. App packaging uses SwiftPM's Xcode backend so generated accessors find bundles in `Contents/Resources` through the main app bundle, without invalid app-root links or a developer-checkout fallback. Build outputs are under `.build/apple/Products/Debug` or `Release`; missing `swift-transformers_Hub.bundle` fails the build. Ordinary `swift build` and `swift test` still use their default backend.
 
-The debug app is signed without macOS App Sandbox. The Codex summary action launches the local Codex CLI, which needs access to the user's Codex auth and state under `~/.codex`.
+The app is signed without macOS App Sandbox. Summary actions launch local provider CLIs using the current user's authentication and configuration.
+
+## Build and Verify the Release DMG
+
+```sh
+scripts/build-release-dmg.sh
+scripts/verify-release-dmg.sh ".build/dist/Meet Note.dmg"
+```
+
+The release builder creates a unique candidate under `.build/dist`, verifies its mounted contents, resources, metadata, architecture, deployment target, signature, and successful unmount, then atomically renames it to `.build/dist/Meet Note.dmg`. Creation or verification failure removes the candidate and preserves any previous verified final image. Run packaging builds one at a time because app assembly uses the shared `.build/app` directory.
+
+Packaging regression checks do not run real builds or mount images:
+
+```sh
+bash scripts/test-packaging.sh
+scripts/verify-release-dmg.sh --self-test
+swift test --filter BrandingTests
+swift test
+```
+
+After a real Release build, exercise the generated Hub resource accessor in a disposable relocated app copy:
+
+```sh
+bash scripts/test-packaged-resources.sh ".build/app/Meet Note.app"
+```
+
+The probe rejects lookup through the developer checkout and reads both bundled tokenizer configurations. It does not launch the app UI, record audio, or call a summary provider.
+
+## Summary Provider Setup and Data Handling
+
+Only the provider you choose needs to be installed and authenticated. Neither CLI nor provider credentials are included in the DMG.
+
+- **Codex:** this build checks `/Applications/ChatGPT.app/Contents/Resources/codex`, then `/Applications/Codex.app/Contents/Resources/codex`. Install an approved app version containing that executable; a standalone `codex` available only on your shell's `PATH` is not discovered by this build. Run the discovered executable with `login` in Terminal under the same macOS user, and complete the authorized account sign-in. See [Codex authentication](https://developers.openai.com/codex/auth).
+- **Claude:** install [Claude Code](https://code.claude.com/docs/en/setup) at `~/.local/bin/claude`, `/opt/homebrew/bin/claude`, or `/usr/local/bin/claude`. Run that executable interactively in Terminal under the same macOS user and complete sign-in (`/login` if needed). Use an authorized account with Claude Code access; see [Claude Code authentication](https://code.claude.com/docs/en/authentication).
+- A Finder-launched app may not inherit shell-only environment variables. Complete authentication before using either summary action; check CLI errors, account access, network access, and usage limits if a summary fails. Contact the internal distributor for unsupported executable locations or installation problems.
+- Choosing **用 Codex 整理摘要** or **用 Claude 整理摘要** passes the selected meeting's transcript data and summary instructions to that local CLI. The CLI may send them to its provider's service using your account/configuration, with the corresponding data policies and usage charges. Local CLI execution does **not** mean the summary stays on device. Only submit meeting data approved for that provider by your organization.
+- The returned Markdown is saved locally as `summary.md`. Audio recording, transcription, and diarization do not require either summary CLI.
 
 ## WhisperKit and SpeakerKit Runtime
 
@@ -42,7 +87,7 @@ The current flow is:
 Record audio.m4a -> refresh UI-only preview every 10 seconds -> Stop -> WhisperKit transcribes full audio.m4a -> SpeakerKit diarizes full audio.m4a -> save transcript.json/transcript.md
 ```
 
-The `用 Codex 整理摘要` action sends the selected meeting's `transcript.json` content to Codex CLI through ephemeral non-interactive `codex exec`. Codex returns Markdown text, and the app writes that text to `summary.md` in the meeting folder. Recording, transcription, and diarization remain local-only; the summary step uses Codex.
+The optional Codex and Claude summary actions use the provider setup and data flow described above, separately from local transcription and diarization.
 
 ## Runtime Storage
 

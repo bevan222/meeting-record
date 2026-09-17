@@ -9,8 +9,14 @@ cd "$REPO_ROOT"
 APP_DIR=".build/app/Meet Note.app"
 DMG_PATH=".build/dist/Meet Note.dmg"
 STAGING_DIR="$(mktemp -d "${TMPDIR:-/tmp}/meet-note-dmg.XXXXXX")"
+CANDIDATE_DIR=""
 
-trap 'rm -rf "$STAGING_DIR"' EXIT
+trap 'rm -rf "$STAGING_DIR"; if [[ -n "$CANDIDATE_DIR" ]]; then rm -rf "$CANDIDATE_DIR"; fi' EXIT
+
+if [[ -d "$DMG_PATH" ]]; then
+    echo "DMG destination is a directory: $DMG_PATH" >&2
+    exit 1
+fi
 
 verify_app_signature() {
     local app_path="$1"
@@ -35,8 +41,11 @@ verify_app_signature "$STAGING_DIR/Meet Note.app"
 ln -s /Applications "$STAGING_DIR/Applications"
 printf '將 Meet Note.app 拖曳至 Applications 資料夾。\n首次開啟請以滑鼠右鍵點選 Meet Note，選擇「打開」。\n' > "$STAGING_DIR/安裝說明.txt"
 
-rm -f "$DMG_PATH"
-hdiutil create -volname "Meet Note" -srcfolder "$STAGING_DIR" -ov -format UDZO "$DMG_PATH"
-"$SCRIPT_DIR/verify-release-dmg.sh" "$DMG_PATH"
+# Keep the candidate on the destination filesystem so publication is one rename.
+CANDIDATE_DIR="$(mktemp -d "$(dirname "$DMG_PATH")/.meet-note-candidate.XXXXXX")"
+CANDIDATE_PATH="$CANDIDATE_DIR/Meet Note.dmg"
+hdiutil create -volname "Meet Note" -srcfolder "$STAGING_DIR" -format UDZO "$CANDIDATE_PATH"
+"$SCRIPT_DIR/verify-release-dmg.sh" "$CANDIDATE_PATH"
+mv -f "$CANDIDATE_PATH" "$DMG_PATH"
 
 echo "Built DMG: $REPO_ROOT/$DMG_PATH"

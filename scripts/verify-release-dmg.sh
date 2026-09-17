@@ -171,6 +171,10 @@ expected_note=$'將 Meet Note.app 拖曳至 Applications 資料夾。\n首次開
 APP_PATH="$MOUNT_POINT/Meet Note.app"
 INFO_PLIST="$APP_PATH/Contents/Info.plist"
 EXECUTABLE="$APP_PATH/Contents/MacOS/MeetingTranscriptApp"
+HUB_BUNDLE="swift-transformers_Hub.bundle"
+
+[[ -d "$APP_PATH/Contents/Resources/$HUB_BUNDLE" ]] || fail "missing resource bundle: $HUB_BUNDLE"
+[[ "$(find "$APP_PATH" -mindepth 1 -maxdepth 1 -exec basename {} \;)" == Contents ]] || fail "unsealed app-root contents"
 
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$INFO_PLIST")" == "Meet Note" ]] || fail "display name is incorrect"
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$INFO_PLIST")" == "Meet Note" ]] || fail "bundle name is incorrect"

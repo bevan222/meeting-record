@@ -41,7 +41,6 @@ final class BrandingTests: XCTestCase {
         XCTAssertTrue(releaseDMGScript.contains("hdiutil create"))
         XCTAssertTrue(releaseDMGScript.contains("${TMPDIR:-/tmp}/meet-note-dmg.XXXXXX"))
         XCTAssertTrue(releaseDMGScript.contains("xattr -cr \"$app_path\""))
-        XCTAssertTrue(releaseDMGScript.contains("\"$SCRIPT_DIR/verify-release-dmg.sh\" \"$DMG_PATH\""))
     }
 
     func testReleaseDMGScriptRetriesStagedSignatureVerificationWithoutRecheckingSourceApp() throws {
