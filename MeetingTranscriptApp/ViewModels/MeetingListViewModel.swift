@@ -23,6 +23,7 @@ final class MeetingListViewModel: ObservableObject {
     private var livePreviewTask: Task<Void, Never>?
     private var isLivePreviewTranscribing = false
     private var livePreviewGeneration = 0
+    private var isStopRecordingInFlight = false
 
     init(repository: FileMeetingRepository) {
         self.repository = repository
@@ -60,6 +61,11 @@ final class MeetingListViewModel: ObservableObject {
 
     var activeRecordingMeetingId: String? {
         activeRecordingContext?.meetingId
+    }
+
+    var activeRecordingTitle: String? {
+        guard let activeRecordingMeetingId else { return nil }
+        return meetings.first { $0.id == activeRecordingMeetingId }?.title
     }
 
     func reload() {
@@ -136,11 +142,17 @@ final class MeetingListViewModel: ObservableObject {
     }
 
     func stopRecording(container: AppContainer) {
-        guard let recordingContext = activeRecordingContext else { return }
+        guard let recordingContext = activeRecordingContext, !isStopRecordingInFlight else { return }
+
+        isStopRecordingInFlight = true
 
         let elapsedSeconds = recorder.elapsedSeconds
 
         Task { @MainActor in
+            defer {
+                isStopRecordingInFlight = false
+            }
+
             clearLivePreview()
 
             guard let audioURL = await recorder.stopRecording() else {

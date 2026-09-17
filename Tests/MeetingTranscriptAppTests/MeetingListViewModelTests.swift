@@ -68,6 +68,66 @@ final class MeetingListViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.canStartRecording)
     }
 
+    func testStopRecordingAcceptsOnlyOneWorkflowWhileStopIsInFlight() async throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let container = AppContainer(repository: repository, workflow: SucceedingWorkflow())
+        let recorder = BlockingStopRecorder()
+        let viewModel = container.meetingListViewModel
+        viewModel.recorder = recorder
+
+        viewModel.startRecording(container: container)
+        let recordingDocument = try await waitForTranscript(in: repository) { document in
+            document.meeting.status == .recording
+        }
+
+        viewModel.stopRecording(container: container)
+        viewModel.stopRecording(container: container)
+
+        try await waitForStopCallCount(recorder, expected: 1)
+        XCTAssertEqual(recorder.stopCallCount, 1)
+
+        recorder.completeStop()
+        _ = try await waitForTranscript(in: repository) { document in
+            document.meeting.id == recordingDocument.meeting.id && document.meeting.status == .speakerAttributed
+        }
+    }
+
+    func testActiveRecordingTitleRemainsTiedToRecordingMeetingAfterSelectionChanges() async throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let container = AppContainer(repository: repository, workflow: SucceedingWorkflow())
+        let recorder = SuccessfulRecorder()
+        let viewModel = container.meetingListViewModel
+        viewModel.recorder = recorder
+
+        viewModel.startRecording(container: container)
+        let recordingDocument = try await waitForTranscript(in: repository) { document in
+            document.meeting.status == .recording
+        }
+
+        let otherMeeting = Meeting(
+            id: "other-meeting",
+            title: "Other Meeting",
+            recordedAt: Date(),
+            durationSeconds: 0,
+            language: "zh-TW",
+            sourceAudio: "audio.m4a",
+            status: .recorded
+        )
+        _ = try repository.createMeetingDirectory(meetingId: otherMeeting.id)
+        try repository.save(TranscriptDocument(meeting: otherMeeting, speakers: [], segments: []))
+        viewModel.reload()
+        viewModel.selectedMeetingId = otherMeeting.id
+
+        XCTAssertEqual(viewModel.activeRecordingTitle, recordingDocument.meeting.title)
+
+        viewModel.stopRecording(container: container)
+        _ = try await waitForTranscript(in: repository) { document in
+            document.meeting.id == recordingDocument.meeting.id && document.meeting.status == .speakerAttributed
+        }
+    }
+
     func testStopSuccessPersistsInjectedWorkflowTranscript() async throws {
         let root = try Self.makeTemporaryRoot()
         let repository = FileMeetingRepository(rootDirectory: root)
@@ -523,6 +583,23 @@ final class MeetingListViewModelTests: XCTestCase {
         throw WaitError.timedOut
     }
 
+    private func waitForStopCallCount(
+        _ recorder: BlockingStopRecorder,
+        expected: Int,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async throws {
+        for _ in 0..<50 {
+            if recorder.stopCallCount == expected {
+                return
+            }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+
+        XCTFail("Timed out waiting for stop call count", file: file, line: line)
+        throw WaitError.timedOut
+    }
+
     private func waitForLivePreviewLoopInactive(
         _ viewModel: MeetingListViewModel,
         file: StaticString = #filePath,
@@ -576,6 +653,44 @@ private final class SuccessfulRecorder: MacAudioRecorder {
         try? Data("audio".utf8).write(to: temporaryURL)
         state = .saved(temporaryURL)
         return temporaryURL
+    }
+}
+
+@MainActor
+private final class BlockingStopRecorder: MacAudioRecorder {
+    private(set) var stopCallCount = 0
+    private var recordingURL: URL?
+    private var continuations: [CheckedContinuation<URL?, Never>] = []
+
+    override func requestPermission() async -> Bool {
+        true
+    }
+
+    override func startRecording(to url: URL, requestPermissionIfNeeded: Bool) async {
+        try? Data("audio".utf8).write(to: url)
+        recordingURL = url
+        elapsedSeconds = 0
+        state = .recording(startedAt: Date())
+    }
+
+    override func stopRecording() async -> URL? {
+        stopCallCount += 1
+        state = .stopping
+
+        return await withCheckedContinuation { continuation in
+            continuations.append(continuation)
+        }
+    }
+
+    func completeStop() {
+        guard let recordingURL else { return }
+
+        state = .saved(recordingURL)
+        let pendingContinuations = continuations
+        continuations.removeAll()
+        for continuation in pendingContinuations {
+            continuation.resume(returning: recordingURL)
+        }
     }
 }
 
