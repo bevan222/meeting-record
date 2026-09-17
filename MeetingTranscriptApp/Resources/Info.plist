@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>local.meeting-transcript-app</string>
+	<key>CFBundleDisplayName</key>
+	<string>Meet Note</string>
+	<key>CFBundleName</key>
+	<string>Meet Note</string>
+	<key>CFBundleExecutable</key>
+	<string>MeetingTranscriptApp</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Meet Note records meeting audio locally to create transcripts.</string>
+</dict>
+</plist>
