@@ -25,6 +25,8 @@ final class BrandingTests: XCTestCase {
 
         XCTAssertTrue(buildScript.contains("APP_DIR=\".build/app/Meet Note.app\""))
         XCTAssertTrue(buildScript.contains("${BUILD_CONFIGURATION:-debug}"))
+        XCTAssertTrue(buildScript.contains("swift build -c \"$BUILD_CONFIGURATION\" --arch arm64"))
+        XCTAssertTrue(buildScript.contains("lipo -archs \"$EXECUTABLE\""))
     }
 
     func testReleaseDMGScriptPackagesTheInternalDistributionArtifacts() throws {
@@ -39,5 +41,6 @@ final class BrandingTests: XCTestCase {
         XCTAssertTrue(releaseDMGScript.contains("hdiutil create"))
         XCTAssertTrue(releaseDMGScript.contains("${TMPDIR:-/tmp}/meet-note-dmg.XXXXXX"))
         XCTAssertTrue(releaseDMGScript.contains("xattr -cr \"$STAGING_DIR/Meet Note.app\""))
+        XCTAssertTrue(releaseDMGScript.contains("\"$SCRIPT_DIR/verify-release-dmg.sh\" \"$DMG_PATH\""))
     }
 }

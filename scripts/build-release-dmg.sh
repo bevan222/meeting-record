@@ -24,5 +24,6 @@ printf '將 Meet Note.app 拖曳至 Applications 資料夾。\n首次開啟請�
 
 rm -f "$DMG_PATH"
 hdiutil create -volname "Meet Note" -srcfolder "$STAGING_DIR" -ov -format UDZO "$DMG_PATH"
+"$SCRIPT_DIR/verify-release-dmg.sh" "$DMG_PATH"
 
 echo "Built DMG: $REPO_ROOT/$DMG_PATH"

@@ -8,7 +8,7 @@ cd "$REPO_ROOT"
 
 BUILD_CONFIGURATION="${BUILD_CONFIGURATION:-debug}"
 
-swift build -c "$BUILD_CONFIGURATION" ${SWIFT_BUILD_FLAGS:-}
+swift build -c "$BUILD_CONFIGURATION" --arch arm64 ${SWIFT_BUILD_FLAGS:-}
 
 EXECUTABLE=".build/$BUILD_CONFIGURATION/MeetingTranscriptApp"
 APP_DIR=".build/app/Meet Note.app"
@@ -22,6 +22,11 @@ ASSET_INFO_PLIST=".build/app/assetcatalog-info.plist"
 
 if [[ ! -x "$EXECUTABLE" ]]; then
     echo "Missing executable: $EXECUTABLE" >&2
+    exit 1
+fi
+
+if ! lipo -archs "$EXECUTABLE" | tr ' ' '\n' | grep -qx arm64; then
+    echo "Built executable is not arm64: $EXECUTABLE" >&2
     exit 1
 fi
 
