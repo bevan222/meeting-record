@@ -40,8 +40,20 @@ final class BrandingTests: XCTestCase {
         XCTAssertTrue(releaseDMGScript.contains("codesign --verify"))
         XCTAssertTrue(releaseDMGScript.contains("hdiutil create"))
         XCTAssertTrue(releaseDMGScript.contains("${TMPDIR:-/tmp}/meet-note-dmg.XXXXXX"))
-        XCTAssertTrue(releaseDMGScript.contains("xattr -cr \"$STAGING_DIR/Meet Note.app\""))
+        XCTAssertTrue(releaseDMGScript.contains("xattr -cr \"$app_path\""))
         XCTAssertTrue(releaseDMGScript.contains("\"$SCRIPT_DIR/verify-release-dmg.sh\" \"$DMG_PATH\""))
+    }
+
+    func testReleaseDMGScriptRetriesStagedSignatureVerificationWithoutRecheckingSourceApp() throws {
+        let releaseDMGScriptURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("scripts/build-release-dmg.sh")
+        let releaseDMGScript = try String(contentsOf: releaseDMGScriptURL, encoding: .utf8)
+
+        XCTAssertTrue(releaseDMGScript.contains("verify_app_signature()"))
+        XCTAssertTrue(releaseDMGScript.contains("for _ in 1 2 3 4 5 6 7 8 9 10; do"))
+        XCTAssertTrue(releaseDMGScript.contains("xattr -cr \"$app_path\""))
+        XCTAssertTrue(releaseDMGScript.contains("verify_app_signature \"$STAGING_DIR/Meet Note.app\""))
+        XCTAssertFalse(releaseDMGScript.contains("codesign --verify --deep --strict --verbose=4 \"$APP_DIR\""))
     }
 
     func testReleaseDMGVerifierRequiresDeploymentMetadataAndTestableCleanup() throws {
