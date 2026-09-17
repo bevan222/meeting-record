@@ -6,9 +6,11 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 cd "$REPO_ROOT"
 
-swift build -c debug ${SWIFT_BUILD_FLAGS:-}
+BUILD_CONFIGURATION="${BUILD_CONFIGURATION:-debug}"
 
-EXECUTABLE=".build/debug/MeetingTranscriptApp"
+swift build -c "$BUILD_CONFIGURATION" ${SWIFT_BUILD_FLAGS:-}
+
+EXECUTABLE=".build/$BUILD_CONFIGURATION/MeetingTranscriptApp"
 APP_DIR=".build/app/Meet Note.app"
 LEGACY_APP_DIR=".build/app/MeetingTranscriptApp.app"
 CONTENTS_DIR="$APP_DIR/Contents"
