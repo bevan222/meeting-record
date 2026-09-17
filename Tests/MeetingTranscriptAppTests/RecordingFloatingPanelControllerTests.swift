@@ -142,6 +142,32 @@ final class RecordingFloatingPanelControllerTests: XCTestCase {
         XCTAssertEqual(presenter.updatedSnapshots.last?.elapsedSeconds, 2)
     }
 
+    func testOutgoingSameWindowOwnerCannotDetachNewerAttachment() {
+        let presenter = FakeFloatingRecorderPresenter()
+        let window = FakeMainWindow(isMiniaturized: true)
+        let controller = RecordingFloatingPanelController(presenter: presenter, onStop: {})
+
+        let firstAttachment = controller.attach(to: window)
+        controller.update(
+            recorderState: .recording(startedAt: Date()),
+            activeRecordingTitle: "Weekly review",
+            elapsedSeconds: 1
+        )
+
+        let secondAttachment = controller.attach(to: window)
+        controller.detach(attachment: firstAttachment)
+        controller.update(
+            recorderState: .recording(startedAt: Date()),
+            activeRecordingTitle: "Weekly review",
+            elapsedSeconds: 2
+        )
+
+        XCTAssertNotEqual(firstAttachment, secondAttachment)
+        XCTAssertEqual(presenter.hideCount, 0)
+        XCTAssertEqual(presenter.shownSnapshots.count, 1)
+        XCTAssertEqual(presenter.updatedSnapshots.last?.elapsedSeconds, 2)
+    }
+
     func testQueuedCloseFromPreviousAttachmentDoesNotDetachNewerWindow() {
         let notifications = FakeMainWindowNotificationObserver()
         let presenter = FakeFloatingRecorderPresenter()

@@ -98,12 +98,12 @@ final class RecordingFloatingPanelController: ObservableObject {
 
     @discardableResult
     func attach(to mainWindow: any MainWindowControlling) -> FloatingRecorderWindowAttachment {
-        if let attachment, isAttached(to: mainWindow) {
-            synchronizePanelVisibility()
-            return attachment
+        if isAttached(to: mainWindow) {
+            removeWindowObservers()
+        } else {
+            detach()
         }
 
-        detach()
         nextAttachmentGeneration += 1
         let attachment = FloatingRecorderWindowAttachment(generation: nextAttachmentGeneration)
         self.mainWindow = mainWindow
