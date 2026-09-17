@@ -273,6 +273,31 @@ final class CodexSummaryGeneratorTests: XCTestCase {
         }
     }
 
+    func testProcessRunnerPrefersCancellationWhenInputWriteFailsAfterCancellation() async throws {
+        let scriptURL = try Self.makeExecutableScript("""
+        #!/bin/sh
+        sleep 5
+        """)
+        let runner = ProcessSummaryCommandRunner()
+        let task = Task {
+            try await runner.runSummaryCommand(
+                executableURL: scriptURL,
+                arguments: [],
+                workingDirectory: FileManager.default.temporaryDirectory,
+                prompt: String(repeating: "x", count: 2_000_000)
+            )
+        }
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+        task.cancel()
+
+        do {
+            _ = try await task.value
+            XCTFail("Expected cancellation")
+        } catch is CancellationError {
+        }
+    }
+
     private static func makeExecutableFile() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try Data().write(to: url)

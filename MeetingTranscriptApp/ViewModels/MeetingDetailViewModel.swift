@@ -15,6 +15,7 @@ final class MeetingDetailViewModel: ObservableObject {
     private let claudeSummaryGenerator: any SummaryGenerating
     private var summaryTask: Task<String, Error>?
     private var activeSummaryRequestID: UUID?
+    private var activeSummaryExecutionID: UUID?
 
     init(
         repository: FileMeetingRepository,
@@ -191,6 +192,7 @@ final class MeetingDetailViewModel: ObservableObject {
 
         let requestID = UUID()
         activeSummaryRequestID = requestID
+        activeSummaryExecutionID = requestID
         activeSummaryProvider = provider
         let task = Task {
             let summary = try await generator.generateSummary(for: document, meetingDirectory: directory)
@@ -199,9 +201,10 @@ final class MeetingDetailViewModel: ObservableObject {
         }
         summaryTask = task
         defer {
-            if activeSummaryRequestID == requestID {
+            if activeSummaryExecutionID == requestID {
                 summaryTask = nil
                 activeSummaryRequestID = nil
+                activeSummaryExecutionID = nil
                 activeSummaryProvider = nil
             }
         }
@@ -213,27 +216,55 @@ final class MeetingDetailViewModel: ObservableObject {
                 task.cancel()
             }
             try Task.checkCancellation()
-            guard self.document?.meeting.id == originalMeetingId else { return }
+            guard canPublishSummary(
+                requestID: requestID,
+                meetingID: originalMeetingId,
+                task: task
+            ) else { return }
 
             try repository.saveSummary(summary, meetingId: originalMeetingId)
-            guard self.document?.meeting.id == originalMeetingId else { return }
+            guard canPublishSummary(
+                requestID: requestID,
+                meetingID: originalMeetingId,
+                task: task
+            ) else { return }
 
-            summaryMarkdown = try repository.loadSummary(meetingId: originalMeetingId)
+            let summaryMarkdown = try repository.loadSummary(meetingId: originalMeetingId)
+            guard canPublishSummary(
+                requestID: requestID,
+                meetingID: originalMeetingId,
+                task: task
+            ) else { return }
+
+            self.summaryMarkdown = summaryMarkdown
             errorMessage = nil
         } catch is CancellationError {
             return
         } catch {
-            guard self.document?.meeting.id == originalMeetingId else { return }
+            guard canPublishSummary(
+                requestID: requestID,
+                meetingID: originalMeetingId,
+                task: task
+            ) else { return }
 
             errorMessage = error.localizedDescription
         }
     }
 
+    private func canPublishSummary(
+        requestID: UUID,
+        meetingID: String,
+        task: Task<String, Error>
+    ) -> Bool {
+        activeSummaryRequestID == requestID
+            && document?.meeting.id == meetingID
+            && !Task.isCancelled
+            && !task.isCancelled
+    }
+
     private func cancelActiveSummary() {
-        summaryTask?.cancel()
-        summaryTask = nil
         activeSummaryRequestID = nil
-        activeSummaryProvider = nil
+        summaryTask?.cancel()
     }
 
     @discardableResult

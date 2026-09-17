@@ -1,5 +1,6 @@
 import Foundation
 import MeetingTranscriptCore
+import Darwin
 
 protocol SummaryGenerating: Sendable {
     func generateSummary(for document: TranscriptDocument, meetingDirectory: URL) async throws -> String
@@ -264,7 +265,13 @@ struct ProcessCodexCommandRunner: CodexCommandRunning {
 }
 
 struct ProcessSummaryCommandRunner: SummaryCommandRunning {
+    private static let ignoresBrokenPipeSignal: Void = {
+        _ = signal(SIGPIPE, SIG_IGN)
+    }()
+
     func runSummaryCommand(executableURL: URL, arguments: [String], workingDirectory: URL, prompt: String) async throws -> SummaryCommandResult {
+        _ = Self.ignoresBrokenPipeSignal
+
         let process = Process()
         process.executableURL = executableURL
         process.arguments = arguments
@@ -307,6 +314,9 @@ struct ProcessSummaryCommandRunner: SummaryCommandRunning {
             } catch {
                 processState.terminate()
                 _ = await processState.waitForTermination()
+                if processState.wasCancelled || Task.isCancelled {
+                    throw CancellationError()
+                }
                 throw error
             }
 

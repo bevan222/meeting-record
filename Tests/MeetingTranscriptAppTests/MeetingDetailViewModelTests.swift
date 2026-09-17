@@ -232,6 +232,161 @@ final class MeetingDetailViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.errorMessage)
     }
 
+    func testSameMeetingReloadRejectsCompletedStaleSummary() async throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let document = Self.sampleDocument()
+        try repository.save(document)
+        try repository.saveSummary("# 舊摘要", meetingId: document.meeting.id)
+        let generator = SuspendedSummaryGenerator()
+        let viewModel = MeetingDetailViewModel(
+            repository: repository,
+            markdownExporter: MarkdownTranscriptExporter(),
+            summaryGenerator: generator
+        )
+        let meetingID = document.meeting.id
+        viewModel.load(meetingId: meetingID)
+        let task = Task {
+            await viewModel.generateSummary()
+        }
+        await generator.waitUntilRequested()
+        generator.resume(with: "# 過期摘要") { [weak viewModel] in
+            Task { @MainActor in
+                viewModel?.load(meetingId: meetingID)
+            }
+        }
+        await task.value
+
+        XCTAssertEqual(try repository.loadSummary(meetingId: meetingID), "# 舊摘要")
+        XCTAssertEqual(viewModel.summaryMarkdown, "# 舊摘要")
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
+    func testMeetingRoundTripRejectsCompletedStaleSummary() async throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let meetingA = Self.sampleDocument(id: "meeting-a", title: "Meeting A")
+        let meetingB = Self.sampleDocument(id: "meeting-b", title: "Meeting B")
+        try repository.save(meetingA)
+        try repository.save(meetingB)
+        try repository.saveSummary("# A 舊摘要", meetingId: meetingA.meeting.id)
+        let generator = SuspendedSummaryGenerator()
+        let viewModel = MeetingDetailViewModel(
+            repository: repository,
+            markdownExporter: MarkdownTranscriptExporter(),
+            summaryGenerator: generator
+        )
+        viewModel.load(meetingId: meetingA.meeting.id)
+        let task = Task {
+            await viewModel.generateSummary()
+        }
+        await generator.waitUntilRequested()
+        generator.resume(with: "# A 過期摘要") { [weak viewModel] in
+            Task { @MainActor in
+                viewModel?.load(meetingId: meetingA.meeting.id)
+                viewModel?.load(meetingId: meetingB.meeting.id)
+                viewModel?.load(meetingId: meetingA.meeting.id)
+            }
+        }
+        await task.value
+
+        XCTAssertEqual(try repository.loadSummary(meetingId: meetingA.meeting.id), "# A 舊摘要")
+        XCTAssertEqual(viewModel.document?.meeting.id, meetingA.meeting.id)
+        XCTAssertEqual(viewModel.summaryMarkdown, "# A 舊摘要")
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
+    func testLoadKeepsProviderLockUntilCancelledGeneratorFinishes() async throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let meetingA = Self.sampleDocument(id: "meeting-a", title: "Meeting A")
+        let meetingB = Self.sampleDocument(id: "meeting-b", title: "Meeting B")
+        try repository.save(meetingA)
+        try repository.save(meetingB)
+        let codex = SuspendedSummaryGenerator()
+        let claude = FakeSummaryGenerator(mode: .success("# Claude 摘要"))
+        let viewModel = MeetingDetailViewModel(
+            repository: repository,
+            markdownExporter: MarkdownTranscriptExporter(),
+            codexSummaryGenerator: codex,
+            claudeSummaryGenerator: claude
+        )
+
+        viewModel.load(meetingId: meetingA.meeting.id)
+        let task = Task {
+            await viewModel.generateSummary(using: .codex)
+        }
+        await codex.waitUntilRequested()
+
+        viewModel.load(meetingId: meetingB.meeting.id)
+        await viewModel.generateSummary(using: .claude)
+
+        XCTAssertEqual(viewModel.activeSummaryProvider, .codex)
+        XCTAssertEqual(claude.requestedDocuments.count, 0)
+
+        codex.resume(with: "# Codex 摘要")
+        await task.value
+        await viewModel.generateSummary(using: .claude)
+
+        XCTAssertEqual(claude.requestedDocuments.count, 1)
+    }
+
+    func testCancelledSummaryErrorDoesNotPublishErrorMessage() async throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let document = Self.sampleDocument()
+        try repository.save(document)
+        try repository.saveSummary("# 舊摘要", meetingId: document.meeting.id)
+        let generator = SuspendedSummaryGenerator()
+        let viewModel = MeetingDetailViewModel(
+            repository: repository,
+            markdownExporter: MarkdownTranscriptExporter(),
+            summaryGenerator: generator
+        )
+
+        viewModel.load(meetingId: document.meeting.id)
+        let task = Task {
+            await viewModel.generateSummary(using: .codex)
+        }
+        await generator.waitUntilRequested()
+        task.cancel()
+        generator.resume(throwing: TestSummaryError.failed)
+        await task.value
+
+        XCTAssertEqual(try repository.loadSummary(meetingId: document.meeting.id), "# 舊摘要")
+        XCTAssertEqual(viewModel.summaryMarkdown, "# 舊摘要")
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
+    func testMeetingRoundTripRejectsStaleSummaryError() async throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let meetingA = Self.sampleDocument(id: "meeting-a", title: "Meeting A")
+        let meetingB = Self.sampleDocument(id: "meeting-b", title: "Meeting B")
+        try repository.save(meetingA)
+        try repository.save(meetingB)
+        let generator = SuspendedSummaryGenerator()
+        let viewModel = MeetingDetailViewModel(
+            repository: repository,
+            markdownExporter: MarkdownTranscriptExporter(),
+            summaryGenerator: generator
+        )
+
+        viewModel.load(meetingId: meetingA.meeting.id)
+        let task = Task {
+            await viewModel.generateSummary()
+        }
+        await generator.waitUntilRequested()
+
+        viewModel.load(meetingId: meetingB.meeting.id)
+        viewModel.load(meetingId: meetingA.meeting.id)
+        generator.resume(throwing: TestSummaryError.failed)
+        await task.value
+
+        XCTAssertEqual(viewModel.document?.meeting.id, meetingA.meeting.id)
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
     func testGenerateSummaryRefusesDocumentWithoutSegments() async throws {
         let root = try Self.makeTemporaryRoot()
         let repository = FileMeetingRepository(rootDirectory: root)
@@ -368,13 +523,23 @@ private final class SuspendedSummaryGenerator: CodexSummaryGenerating, @unchecke
         }
     }
 
-    func resume(with summary: String) {
+    func resume(with summary: String, afterResuming: @escaping @Sendable () -> Void = {}) {
         lock.lock()
         let summaryContinuation = summaryContinuation
         self.summaryContinuation = nil
         lock.unlock()
 
         summaryContinuation?.resume(returning: summary)
+        afterResuming()
+    }
+
+    func resume(throwing error: Error) {
+        lock.lock()
+        let summaryContinuation = summaryContinuation
+        self.summaryContinuation = nil
+        lock.unlock()
+
+        summaryContinuation?.resume(throwing: error)
     }
 }
 
