@@ -43,4 +43,16 @@ final class BrandingTests: XCTestCase {
         XCTAssertTrue(releaseDMGScript.contains("xattr -cr \"$STAGING_DIR/Meet Note.app\""))
         XCTAssertTrue(releaseDMGScript.contains("\"$SCRIPT_DIR/verify-release-dmg.sh\" \"$DMG_PATH\""))
     }
+
+    func testReleaseDMGVerifierRequiresDeploymentMetadataAndTestableCleanup() throws {
+        let verifierScriptURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("scripts/verify-release-dmg.sh")
+        let verifierScript = try String(contentsOf: verifierScriptURL, encoding: .utf8)
+
+        XCTAssertTrue(verifierScript.contains("VTOOL_COMMAND=\"${VTOOL_COMMAND:-vtool}\""))
+        XCTAssertTrue(verifierScript.contains("minimum_macos=\"$(read_macos_deployment_target \"$EXECUTABLE\")\""))
+        XCTAssertTrue(verifierScript.contains("DETACH_RETRIES=\"${DETACH_RETRIES:-3}\""))
+        XCTAssertTrue(verifierScript.contains("for ((attempt = 1; attempt <= DETACH_RETRIES; attempt++))"))
+        XCTAssertTrue(verifierScript.contains("if [[ \"${1:-}\" == \"--self-test\" ]]"))
+    }
 }

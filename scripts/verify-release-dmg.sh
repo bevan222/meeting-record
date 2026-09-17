@@ -3,8 +3,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-DMG_PATH="${1:-$REPO_ROOT/.build/dist/Meet Note.dmg}"
-MOUNT_POINT="$(mktemp -d "${TMPDIR:-/tmp}/meet-note-dmg-mount.XXXXXX")"
+HDIUTIL_COMMAND="${HDIUTIL_COMMAND:-hdiutil}"
+VTOOL_COMMAND="${VTOOL_COMMAND:-vtool}"
+SLEEP_COMMAND="${SLEEP_COMMAND:-sleep}"
+DETACH_RETRIES="${DETACH_RETRIES:-3}"
+MOUNT_POINT=""
 MOUNTED=false
 
 fail() {
@@ -12,17 +15,107 @@ fail() {
     exit 1
 }
 
-cleanup() {
-    if [[ "$MOUNTED" == true ]]; then
-        hdiutil detach "$MOUNT_POINT" >/dev/null 2>&1 || true
-    fi
-    rmdir "$MOUNT_POINT" 2>/dev/null || true
+read_macos_deployment_target() {
+    local vtool_output
+    local deployment_target
+
+    command -v "$VTOOL_COMMAND" >/dev/null 2>&1 || return 1
+    vtool_output="$("$VTOOL_COMMAND" -show-build "$1")" || return 1
+    deployment_target="$(printf '%s\n' "$vtool_output" | awk '$1 == "minos" { print $2; exit }')"
+    [[ -n "$deployment_target" ]] || return 1
+    printf '%s\n' "$deployment_target"
 }
 
+detach_mounted_image() {
+    local attempt
+
+    for ((attempt = 1; attempt <= DETACH_RETRIES; attempt++)); do
+        if "$HDIUTIL_COMMAND" detach "$MOUNT_POINT" >/dev/null 2>&1; then
+            MOUNTED=false
+            return 0
+        fi
+        if (( attempt < DETACH_RETRIES )); then
+            "$SLEEP_COMMAND" 0.2
+        fi
+    done
+
+    return 1
+}
+
+cleanup() {
+    local status=$?
+
+    trap - EXIT
+    if [[ "$MOUNTED" == true ]] && ! detach_mounted_image; then
+        echo "DMG verification failed: could not detach $MOUNT_POINT" >&2
+        exit 1
+    fi
+    rmdir "$MOUNT_POINT" 2>/dev/null || true
+    exit "$status"
+}
+
+run_self_test() {
+    local self_test_mount
+    local failures=0
+
+    self_test_mount="$(mktemp -d "${TMPDIR:-/tmp}/meet-note-dmg-self-test.XXXXXX")"
+
+    VTOOL_COMMAND="meet-note-missing-vtool"
+    if read_macos_deployment_target "$self_test_mount" >/dev/null; then
+        echo "Self-test failed: missing vtool was accepted" >&2
+        failures=1
+    fi
+
+    VTOOL_COMMAND=false
+    if read_macos_deployment_target "$self_test_mount" >/dev/null; then
+        echo "Self-test failed: failing vtool was accepted" >&2
+        failures=1
+    fi
+
+    VTOOL_COMMAND=true
+    if read_macos_deployment_target "$self_test_mount" >/dev/null; then
+        echo "Self-test failed: unparsable vtool output was accepted" >&2
+        failures=1
+    fi
+
+    MOUNT_POINT="$self_test_mount"
+    MOUNTED=true
+    HDIUTIL_COMMAND=false
+    SLEEP_COMMAND=true
+    DETACH_RETRIES=2
+    if detach_mounted_image; then
+        echo "Self-test failed: failing detach was accepted" >&2
+        failures=1
+    fi
+    if [[ "$MOUNTED" != true ]]; then
+        echo "Self-test failed: failed detach cleared mount state" >&2
+        failures=1
+    fi
+
+    HDIUTIL_COMMAND=true
+    if ! detach_mounted_image || [[ "$MOUNTED" != false ]]; then
+        echo "Self-test failed: successful detach was not recorded" >&2
+        failures=1
+    fi
+
+    rmdir "$self_test_mount"
+    [[ "$failures" == 0 ]] || return 1
+    echo "Verifier self-test passed"
+}
+
+if [[ "${1:-}" == "--self-test" ]]; then
+    run_self_test
+    exit
+fi
+
+[[ "$DETACH_RETRIES" =~ ^[1-9][0-9]*$ ]] || fail "invalid detach retry count: $DETACH_RETRIES"
+
+DMG_PATH="${1:-$REPO_ROOT/.build/dist/Meet Note.dmg}"
+MOUNT_POINT="$(mktemp -d "${TMPDIR:-/tmp}/meet-note-dmg-mount.XXXXXX")"
 trap cleanup EXIT
 
 [[ -f "$DMG_PATH" ]] || fail "missing DMG: $DMG_PATH"
-hdiutil attach -nobrowse -readonly -mountpoint "$MOUNT_POINT" "$DMG_PATH" >/dev/null
+"$HDIUTIL_COMMAND" attach -nobrowse -readonly -mountpoint "$MOUNT_POINT" "$DMG_PATH" >/dev/null
 MOUNTED=true
 
 expected_entries=$'Applications\nMeet Note.app\n安裝說明.txt'
@@ -45,15 +138,11 @@ EXECUTABLE="$APP_PATH/Contents/MacOS/MeetingTranscriptApp"
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INFO_PLIST")" == "1" ]] || fail "bundle build is incorrect"
 
 lipo -archs "$EXECUTABLE" | tr ' ' '\n' | grep -qx arm64 || fail "packaged executable is not arm64"
-
-if command -v vtool >/dev/null; then
-    minimum_macos="$(vtool -show-build "$EXECUTABLE" | awk '$1 == "minos" { print $2; exit }')"
-    if [[ -n "$minimum_macos" ]]; then
-        [[ "$minimum_macos" == "14.0" ]] || fail "minimum macOS version is $minimum_macos"
-    else
-        echo "DMG verification: unable to parse minimum macOS version" >&2
-    fi
-fi
+minimum_macos="$(read_macos_deployment_target "$EXECUTABLE")" || fail "could not read minimum macOS version"
+case "$minimum_macos" in
+    14.0|14.0.0) ;;
+    *) fail "minimum macOS version is $minimum_macos" ;;
+esac
 
 codesign --verify --deep --strict --verbose=4 "$APP_PATH"
 echo "Verified DMG: $DMG_PATH"
