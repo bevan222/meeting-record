@@ -16,7 +16,7 @@ struct MeetingTranscriptApplication: App {
     }
 
     var body: some Scene {
-        WindowGroup {
+        Window("Meet Note", id: "main") {
             FloatingRecorderRootView(
                 listViewModel: container.meetingListViewModel,
                 floatingPanelController: floatingPanelController

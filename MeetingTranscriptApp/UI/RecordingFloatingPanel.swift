@@ -17,7 +17,7 @@ protocol FloatingRecorderPanelPresenting: AnyObject {
 @MainActor
 protocol MainWindowControlling: AnyObject {
     var isMiniaturized: Bool { get }
-    var notificationWindow: NSWindow? { get }
+    var notificationObject: AnyObject? { get }
 
     func deminiaturize()
     func makeKeyAndOrderFront()
@@ -25,18 +25,59 @@ protocol MainWindowControlling: AnyObject {
 }
 
 @MainActor
+protocol MainWindowNotificationObserving: AnyObject {
+    func addObserver(
+        forName name: Notification.Name,
+        object: AnyObject,
+        handler: @escaping @MainActor () -> Void
+    ) -> NSObjectProtocol
+    func removeObserver(_ token: NSObjectProtocol)
+}
+
+@MainActor
+private final class MainWindowNotificationObserver: MainWindowNotificationObserving {
+    func addObserver(
+        forName name: Notification.Name,
+        object: AnyObject,
+        handler: @escaping @MainActor () -> Void
+    ) -> NSObjectProtocol {
+        NotificationCenter.default.addObserver(forName: name, object: object, queue: .main) { _ in
+            Task { @MainActor in
+                handler()
+            }
+        }
+    }
+
+    func removeObserver(_ token: NSObjectProtocol) {
+        NotificationCenter.default.removeObserver(token)
+    }
+}
+
+struct FloatingRecorderWindowAttachment: Equatable {
+    fileprivate let generation: UInt
+}
+
+@MainActor
 final class RecordingFloatingPanelController: ObservableObject {
     private let presenter: any FloatingRecorderPanelPresenting
+    private let notificationObserver: any MainWindowNotificationObserving
     private let onStop: () -> Void
     private var mainWindow: (any MainWindowControlling)?
     private var notificationTokens: [NSObjectProtocol] = []
+    private var attachment: FloatingRecorderWindowAttachment?
+    private var nextAttachmentGeneration: UInt = 0
     private var recorderState: MacAudioRecorder.State = .idle
     private var snapshot: FloatingRecorderSnapshot?
     private var isPanelVisible = false
     private var isStopRequested = false
 
-    init(presenter: any FloatingRecorderPanelPresenting, onStop: @escaping () -> Void) {
+    init(
+        presenter: any FloatingRecorderPanelPresenting,
+        notificationObserver: any MainWindowNotificationObserving = MainWindowNotificationObserver(),
+        onStop: @escaping () -> Void
+    ) {
         self.presenter = presenter
+        self.notificationObserver = notificationObserver
         self.onStop = onStop
     }
 
@@ -55,32 +96,33 @@ final class RecordingFloatingPanelController: ObservableObject {
         removeWindowObservers()
     }
 
-    func attach(to mainWindow: any MainWindowControlling) {
-        if let attachedWindow = self.mainWindow,
-           (attachedWindow as AnyObject) === (mainWindow as AnyObject)
-        {
+    @discardableResult
+    func attach(to mainWindow: any MainWindowControlling) -> FloatingRecorderWindowAttachment {
+        if let attachment, isAttached(to: mainWindow) {
             synchronizePanelVisibility()
-            return
-        }
-
-        if let attachedWindow = self.mainWindow?.notificationWindow,
-           let newWindow = mainWindow.notificationWindow,
-           attachedWindow === newWindow
-        {
-            synchronizePanelVisibility()
-            return
+            return attachment
         }
 
         detach()
+        nextAttachmentGeneration += 1
+        let attachment = FloatingRecorderWindowAttachment(generation: nextAttachmentGeneration)
         self.mainWindow = mainWindow
-        observe(mainWindow)
+        self.attachment = attachment
+        observe(mainWindow, attachment: attachment)
         synchronizePanelVisibility()
+        return attachment
     }
 
     func detach() {
         removeWindowObservers()
         mainWindow = nil
+        attachment = nil
         synchronizePanelVisibility()
+    }
+
+    func detach(attachment: FloatingRecorderWindowAttachment) {
+        guard attachment == self.attachment else { return }
+        detach()
     }
 
     func update(
@@ -153,57 +195,94 @@ final class RecordingFloatingPanelController: ObservableObject {
         }
     }
 
-    private func observe(_ mainWindow: any MainWindowControlling) {
-        guard let notificationWindow = mainWindow.notificationWindow else { return }
+    private func isAttached(to mainWindow: any MainWindowControlling) -> Bool {
+        if let attachedObject = self.mainWindow?.notificationObject,
+           let newObject = mainWindow.notificationObject
+        {
+            return attachedObject === newObject
+        }
 
-        let center = NotificationCenter.default
+        guard let attachedWindow = self.mainWindow else { return false }
+        return (attachedWindow as AnyObject) === (mainWindow as AnyObject)
+    }
+
+    private func observe(
+        _ mainWindow: any MainWindowControlling,
+        attachment: FloatingRecorderWindowAttachment
+    ) {
+        guard let notificationObject = mainWindow.notificationObject else { return }
+
         notificationTokens = [
-            center.addObserver(
+            notificationObserver.addObserver(
                 forName: NSWindow.didMiniaturizeNotification,
-                object: notificationWindow,
-                queue: .main
-            ) { [weak self] _ in
-                Task { @MainActor in
-                    self?.mainWindowDidMiniaturize()
-                }
+                object: notificationObject
+            ) { [weak self] in
+                self?.handleWindowEvent(.didMiniaturize, attachment: attachment)
             },
-            center.addObserver(
+            notificationObserver.addObserver(
                 forName: NSWindow.didDeminiaturizeNotification,
-                object: notificationWindow,
-                queue: .main
-            ) { [weak self] _ in
-                Task { @MainActor in
-                    self?.mainWindowDidDeminiaturize()
-                }
+                object: notificationObject
+            ) { [weak self] in
+                self?.handleWindowEvent(.didDeminiaturize, attachment: attachment)
             },
-            center.addObserver(
+            notificationObserver.addObserver(
                 forName: NSWindow.willCloseNotification,
-                object: notificationWindow,
-                queue: .main
-            ) { [weak self] _ in
-                Task { @MainActor in
-                    self?.detach()
-                }
+                object: notificationObject
+            ) { [weak self] in
+                self?.handleWindowEvent(.willClose, attachment: attachment)
             }
         ]
     }
 
+    private func handleWindowEvent(
+        _ event: MainWindowEvent,
+        attachment: FloatingRecorderWindowAttachment
+    ) {
+        guard attachment == self.attachment else { return }
+
+        switch event {
+        case .didMiniaturize:
+            mainWindowDidMiniaturize()
+        case .didDeminiaturize:
+            mainWindowDidDeminiaturize()
+        case .willClose:
+            detach(attachment: attachment)
+        }
+    }
+
     private func removeWindowObservers() {
-        let center = NotificationCenter.default
-        notificationTokens.forEach(center.removeObserver)
+        notificationTokens.forEach(notificationObserver.removeObserver)
         notificationTokens.removeAll()
     }
 }
 
+private enum MainWindowEvent {
+    case didMiniaturize
+    case didDeminiaturize
+    case willClose
+}
+
+private enum FloatingRecorderPanelLayout {
+    static let contentSize = NSSize(width: 320, height: 88)
+}
+
 @MainActor
-private final class RecordingFloatingPanel: NSPanel, FloatingRecorderPanelPresenting {
+final class RecordingFloatingPanel: NSPanel, FloatingRecorderPanelPresenting {
     var onStop: (() -> Void)?
     var onRestore: (() -> Void)?
 
     private var hostingView: NSHostingView<FloatingRecorderPanelContent>!
 
+    var fixedContentSize: NSSize {
+        FloatingRecorderPanelLayout.contentSize
+    }
+
+    var hostingViewFrame: NSRect {
+        hostingView.frame
+    }
+
     init() {
-        let panelSize = NSSize(width: 320, height: 88)
+        let panelSize = FloatingRecorderPanelLayout.contentSize
         super.init(
             contentRect: NSRect(origin: .zero, size: panelSize),
             styleMask: [.titled, .utilityWindow],
@@ -216,12 +295,16 @@ private final class RecordingFloatingPanel: NSPanel, FloatingRecorderPanelPresen
         hidesOnDeactivate = false
         isReleasedWhenClosed = false
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        minSize = panelSize
-        maxSize = panelSize
         isMovableByWindowBackground = true
 
         hostingView = NSHostingView(rootView: makeContent(snapshot: nil))
+        hostingView.sizingOptions = []
+        hostingView.frame = NSRect(origin: .zero, size: panelSize)
+        hostingView.autoresizingMask = [.width, .height]
         contentView = hostingView
+        contentMinSize = panelSize
+        contentMaxSize = panelSize
+        setContentSize(panelSize)
     }
 
     func show(snapshot: FloatingRecorderSnapshot) {
@@ -284,6 +367,10 @@ private struct FloatingRecorderPanelContent: View {
             .help("Return to main window")
         }
         .padding(16)
+        .frame(
+            width: FloatingRecorderPanelLayout.contentSize.width,
+            height: FloatingRecorderPanelLayout.contentSize.height
+        )
     }
 
     private var formattedElapsedTime: String {
@@ -309,7 +396,7 @@ private final class AppKitMainWindow: MainWindowControlling {
         window?.isMiniaturized ?? false
     }
 
-    var notificationWindow: NSWindow? {
+    var notificationObject: AnyObject? {
         window
     }
 
@@ -327,14 +414,13 @@ private final class AppKitMainWindow: MainWindowControlling {
 }
 
 struct MainWindowAccessor: NSViewRepresentable {
-    let onWindowChanged: (NSWindow?) -> Void
+    let floatingPanelController: RecordingFloatingPanelController
 
     func makeNSView(context: Context) -> WindowAccessView {
-        WindowAccessView(onWindowChanged: onWindowChanged)
+        WindowAccessView(floatingPanelController: floatingPanelController)
     }
 
     func updateNSView(_ nsView: WindowAccessView, context: Context) {
-        nsView.onWindowChanged = onWindowChanged
         nsView.reportWindow()
     }
 }
@@ -346,13 +432,7 @@ struct FloatingRecorderRootView: View {
     var body: some View {
         ContentView()
             .background(
-                MainWindowAccessor { window in
-                    if let window {
-                        floatingPanelController.attach(to: AppKitMainWindow(window: window))
-                    } else {
-                        floatingPanelController.detach()
-                    }
-                }
+                MainWindowAccessor(floatingPanelController: floatingPanelController)
             )
             .onAppear {
                 updateFloatingPanel()
@@ -378,10 +458,11 @@ struct FloatingRecorderRootView: View {
 }
 
 final class WindowAccessView: NSView {
-    var onWindowChanged: (NSWindow?) -> Void
+    private let floatingPanelController: RecordingFloatingPanelController
+    private var attachment: FloatingRecorderWindowAttachment?
 
-    init(onWindowChanged: @escaping (NSWindow?) -> Void) {
-        self.onWindowChanged = onWindowChanged
+    init(floatingPanelController: RecordingFloatingPanelController) {
+        self.floatingPanelController = floatingPanelController
         super.init(frame: .zero)
     }
 
@@ -395,6 +476,11 @@ final class WindowAccessView: NSView {
     }
 
     func reportWindow() {
-        onWindowChanged(window)
+        if let window {
+            attachment = floatingPanelController.attach(to: AppKitMainWindow(window: window))
+        } else if let attachment {
+            floatingPanelController.detach(attachment: attachment)
+            self.attachment = nil
+        }
     }
 }
