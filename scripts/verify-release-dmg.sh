@@ -42,19 +42,36 @@ detach_mounted_image() {
     return 1
 }
 
+cleanup_mount_point() {
+    if [[ "$MOUNTED" == true ]] && ! detach_mounted_image; then
+        return 1
+    fi
+    rmdir "$MOUNT_POINT" 2>/dev/null || true
+}
+
 cleanup() {
     local status=$?
 
     trap - EXIT
-    if [[ "$MOUNTED" == true ]] && ! detach_mounted_image; then
+    if ! cleanup_mount_point; then
         echo "DMG verification failed: could not detach $MOUNT_POINT" >&2
         exit 1
     fi
-    rmdir "$MOUNT_POINT" 2>/dev/null || true
     exit "$status"
 }
 
+finish_success() {
+    if ! cleanup_mount_point; then
+        trap - EXIT
+        fail "could not detach $MOUNT_POINT"
+    fi
+    trap - EXIT
+    echo "Verified DMG: $1"
+}
+
 run_self_test() {
+    local cleanup_output
+    local cleanup_status
     local self_test_mount
     local failures=0
 
@@ -95,6 +112,30 @@ run_self_test() {
     HDIUTIL_COMMAND=true
     if ! detach_mounted_image || [[ "$MOUNTED" != false ]]; then
         echo "Self-test failed: successful detach was not recorded" >&2
+        failures=1
+    fi
+
+    if cleanup_output="$(
+        (
+            MOUNT_POINT="$self_test_mount"
+            MOUNTED=true
+            HDIUTIL_COMMAND=false
+            SLEEP_COMMAND=true
+            DETACH_RETRIES=2
+            trap cleanup EXIT
+            finish_success "self-test"
+        ) 2>&1
+    )"; then
+        cleanup_status=0
+    else
+        cleanup_status=$?
+    fi
+    if [[ "$cleanup_status" == 0 ]]; then
+        echo "Self-test failed: cleanup failure returned success" >&2
+        failures=1
+    fi
+    if [[ "$cleanup_output" == *"Verified DMG:"* ]]; then
+        echo "Self-test failed: cleanup failure reported verification success" >&2
         failures=1
     fi
 
@@ -145,4 +186,4 @@ case "$minimum_macos" in
 esac
 
 codesign --verify --deep --strict --verbose=4 "$APP_PATH"
-echo "Verified DMG: $DMG_PATH"
+finish_success "$DMG_PATH"

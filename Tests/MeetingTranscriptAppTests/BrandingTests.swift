@@ -54,5 +54,8 @@ final class BrandingTests: XCTestCase {
         XCTAssertTrue(verifierScript.contains("DETACH_RETRIES=\"${DETACH_RETRIES:-3}\""))
         XCTAssertTrue(verifierScript.contains("for ((attempt = 1; attempt <= DETACH_RETRIES; attempt++))"))
         XCTAssertTrue(verifierScript.contains("if [[ \"${1:-}\" == \"--self-test\" ]]"))
+        XCTAssertTrue(verifierScript.contains("finish_success()"))
+        XCTAssertTrue(verifierScript.contains("finish_success \"$DMG_PATH\""))
+        XCTAssertTrue(verifierScript.contains("cleanup_output"))
     }
 }
