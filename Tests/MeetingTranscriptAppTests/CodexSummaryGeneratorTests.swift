@@ -136,6 +136,143 @@ final class CodexSummaryGeneratorTests: XCTestCase {
         }
     }
 
+    func testClaudeGeneratorUsesNextExistingExecutableWithRequiredArgumentsAndTrimmedStandardOutput() async throws {
+        let missingURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let executableURL = try Self.makeExecutableFile()
+        let runner = FakeSummaryCommandRunner { call in
+            guard call.executableURL == executableURL else {
+                throw TestError.unexpectedExecutable(call.executableURL.path)
+            }
+            return SummaryCommandResult(
+                terminationStatus: 0,
+                standardOutput: " \n# Claude 摘要\n ",
+                standardError: ""
+            )
+        }
+        let generator = ClaudeCLISummaryGenerator(
+            executableURLs: [missingURL, executableURL],
+            commandRunner: runner
+        )
+
+        let summary = try await generator.generateSummary(
+            for: Self.sampleDocument(),
+            meetingDirectory: URL(fileURLWithPath: "/tmp/meeting")
+        )
+
+        XCTAssertEqual(summary, "# Claude 摘要")
+        let call = try XCTUnwrap(runner.calls.first)
+        XCTAssertEqual(call.arguments, [
+            "-p", "--input-format", "text", "--output-format", "text",
+            "--no-session-persistence", "--tools", "", "--disallowedTools", "mcp__*"
+        ])
+    }
+
+    func testClaudeGeneratorListsCheckedPathsWhenNoExecutableExists() async throws {
+        let firstURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let secondURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let generator = ClaudeCLISummaryGenerator(
+            executableURLs: [firstURL, secondURL],
+            commandRunner: FakeSummaryCommandRunner { _ in
+                XCTFail("The command runner should not run without an executable.")
+                return SummaryCommandResult(terminationStatus: 0, standardOutput: "", standardError: "")
+            }
+        )
+
+        do {
+            _ = try await generator.generateSummary(
+                for: Self.sampleDocument(),
+                meetingDirectory: URL(fileURLWithPath: "/tmp/meeting")
+            )
+            XCTFail("Expected missing Claude executable failure")
+        } catch {
+            XCTAssertEqual(
+                error.localizedDescription,
+                "Claude CLI was not found. Checked: \(firstURL.path), \(secondURL.path)."
+            )
+        }
+    }
+
+    func testClaudeGeneratorUsesTheSharedTraditionalChinesePrompt() async throws {
+        let executableURL = try Self.makeExecutableFile()
+        let claudeRunner = FakeSummaryCommandRunner { _ in
+            SummaryCommandResult(terminationStatus: 0, standardOutput: "# 摘要", standardError: "")
+        }
+        let codexRunner = FakeCodexCommandRunner { call in
+            try "# 摘要".write(to: call.outputFileURL, atomically: true, encoding: .utf8)
+            return CodexCommandResult(terminationStatus: 0, standardError: "")
+        }
+        let document = Self.sampleDocument()
+
+        _ = try await CodexCLISummaryGenerator(executableURL: executableURL, commandRunner: codexRunner)
+            .generateSummary(for: document, meetingDirectory: URL(fileURLWithPath: "/tmp/meeting"))
+        _ = try await ClaudeCLISummaryGenerator(executableURL: executableURL, commandRunner: claudeRunner)
+            .generateSummary(for: document, meetingDirectory: URL(fileURLWithPath: "/tmp/meeting"))
+
+        XCTAssertEqual(claudeRunner.calls.first?.prompt, codexRunner.calls.first?.prompt)
+        XCTAssertTrue(claudeRunner.calls.first?.prompt.contains("請使用繁體中文，輸出 Markdown。") == true)
+    }
+
+    func testClaudeGeneratorThrowsReadableErrorWhenCommandExitsNonZero() async throws {
+        let generator = ClaudeCLISummaryGenerator(
+            executableURL: try Self.makeExecutableFile(),
+            commandRunner: FakeSummaryCommandRunner { _ in
+                SummaryCommandResult(terminationStatus: 1, standardOutput: "", standardError: "login required")
+            }
+        )
+
+        do {
+            _ = try await generator.generateSummary(for: Self.sampleDocument(), meetingDirectory: URL(fileURLWithPath: "/tmp/meeting"))
+            XCTFail("Expected Claude CLI failure")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, "Claude CLI failed: login required")
+        }
+    }
+
+    func testClaudeGeneratorRejectsEmptyStandardOutput() async throws {
+        let generator = ClaudeCLISummaryGenerator(
+            executableURL: try Self.makeExecutableFile(),
+            commandRunner: FakeSummaryCommandRunner { _ in
+                SummaryCommandResult(terminationStatus: 0, standardOutput: " \n\t ", standardError: "")
+            }
+        )
+
+        do {
+            _ = try await generator.generateSummary(for: Self.sampleDocument(), meetingDirectory: URL(fileURLWithPath: "/tmp/meeting"))
+            XCTFail("Expected empty output failure")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, "Claude CLI returned an empty summary.")
+        }
+    }
+
+    func testSharedProcessRunnerTerminatesClaudeProcessWhenTaskIsCancelled() async throws {
+        let scriptURL = try Self.makeExecutableScript("""
+        #!/bin/sh
+        read input
+        sleep 5
+        echo "$input"
+        """)
+        let runner = ProcessSummaryCommandRunner()
+        let start = Date()
+        let task = Task {
+            try await runner.runSummaryCommand(
+                executableURL: scriptURL,
+                arguments: [],
+                workingDirectory: FileManager.default.temporaryDirectory,
+                prompt: "prompt"
+            )
+        }
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+        task.cancel()
+
+        do {
+            _ = try await task.value
+            XCTFail("Expected cancellation")
+        } catch is CancellationError {
+            XCTAssertLessThan(Date().timeIntervalSince(start), 2)
+        }
+    }
+
     private static func makeExecutableFile() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try Data().write(to: url)
@@ -188,6 +325,28 @@ private final class FakeCodexCommandRunner: CodexCommandRunning, @unchecked Send
 
     func runCodex(executableURL: URL, arguments: [String], workingDirectory: URL, outputFileURL: URL, prompt: String) async throws -> CodexCommandResult {
         let call = Call(executableURL: executableURL, arguments: arguments, workingDirectory: workingDirectory, outputFileURL: outputFileURL, prompt: prompt)
+        calls.append(call)
+        return try handler(call)
+    }
+}
+
+private final class FakeSummaryCommandRunner: SummaryCommandRunning, @unchecked Sendable {
+    struct Call {
+        let executableURL: URL
+        let arguments: [String]
+        let workingDirectory: URL
+        let prompt: String
+    }
+
+    private let handler: @Sendable (Call) throws -> SummaryCommandResult
+    private(set) var calls: [Call] = []
+
+    init(handler: @escaping @Sendable (Call) throws -> SummaryCommandResult) {
+        self.handler = handler
+    }
+
+    func runSummaryCommand(executableURL: URL, arguments: [String], workingDirectory: URL, prompt: String) async throws -> SummaryCommandResult {
+        let call = Call(executableURL: executableURL, arguments: arguments, workingDirectory: workingDirectory, prompt: prompt)
         calls.append(call)
         return try handler(call)
     }

@@ -142,17 +142,19 @@ struct MeetingDetailView: View {
             }
 
             HStack(spacing: 8) {
-                Button("用 Codex 整理摘要") {
-                    Task {
-                        await viewModel.generateSummary()
+                ForEach([SummaryProvider.codex, .claude], id: \.self) { provider in
+                    Button(provider.actionLabel) {
+                        Task {
+                            await viewModel.generateSummary(using: provider)
+                        }
                     }
+                    .disabled(!viewModel.canGenerateSummary || isActiveRecordingDocument(document))
                 }
-                .disabled(!viewModel.canGenerateSummary || isActiveRecordingDocument(document))
 
-                if viewModel.isGeneratingSummary {
+                if let provider = viewModel.activeSummaryProvider {
                     ProgressView()
                         .controlSize(.small)
-                    Text("Codex 整理中...")
+                    Text(provider.progressLabel)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -188,7 +190,7 @@ struct MeetingDetailView: View {
                     }
                     .frame(maxHeight: 180)
                 } label: {
-                    Text("Codex 摘要")
+                    Text("會議摘要")
                         .font(.headline)
                 }
             }

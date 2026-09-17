@@ -7,7 +7,8 @@ final class AppContainer: ObservableObject {
     let repository: FileMeetingRepository
     let workflow: any TranscriptBuilding
     let livePreviewTranscriber: any LivePreviewTranscribing
-    let summaryGenerator: any CodexSummaryGenerating
+    let codexSummaryGenerator: any SummaryGenerating
+    let claudeSummaryGenerator: any SummaryGenerating
     let markdownExporter: MarkdownTranscriptExporter
     let jsonExporter: JSONTranscriptExporter
 
@@ -23,7 +24,8 @@ final class AppContainer: ObservableObject {
                 assembler: TranscriptAssembler()
             ),
             livePreviewTranscriber: WhisperKitLivePreviewTranscriber(),
-            summaryGenerator: CodexCLISummaryGenerator()
+            codexSummaryGenerator: CodexCLISummaryGenerator(),
+            claudeSummaryGenerator: ClaudeCLISummaryGenerator()
         )
     }
 
@@ -31,21 +33,24 @@ final class AppContainer: ObservableObject {
         repository: FileMeetingRepository,
         workflow: any TranscriptBuilding,
         livePreviewTranscriber: any LivePreviewTranscribing,
-        summaryGenerator: any CodexSummaryGenerating = CodexCLISummaryGenerator()
+        codexSummaryGenerator: any SummaryGenerating = CodexCLISummaryGenerator(),
+        claudeSummaryGenerator: any SummaryGenerating = ClaudeCLISummaryGenerator()
     ) {
         let markdownExporter = MarkdownTranscriptExporter()
 
         self.repository = repository
         self.workflow = workflow
         self.livePreviewTranscriber = livePreviewTranscriber
-        self.summaryGenerator = summaryGenerator
+        self.codexSummaryGenerator = codexSummaryGenerator
+        self.claudeSummaryGenerator = claudeSummaryGenerator
         self.markdownExporter = markdownExporter
         self.jsonExporter = JSONTranscriptExporter()
         self.meetingListViewModel = MeetingListViewModel(repository: repository)
         self.meetingDetailViewModel = MeetingDetailViewModel(
             repository: repository,
             markdownExporter: markdownExporter,
-            summaryGenerator: summaryGenerator
+            codexSummaryGenerator: codexSummaryGenerator,
+            claudeSummaryGenerator: claudeSummaryGenerator
         )
     }
 
@@ -54,7 +59,8 @@ final class AppContainer: ObservableObject {
             repository: repository,
             workflow: workflow,
             livePreviewTranscriber: WhisperKitLivePreviewTranscriber(),
-            summaryGenerator: CodexCLISummaryGenerator()
+            codexSummaryGenerator: CodexCLISummaryGenerator(),
+            claudeSummaryGenerator: ClaudeCLISummaryGenerator()
         )
     }
 
@@ -67,7 +73,8 @@ final class AppContainer: ObservableObject {
                 assembler: TranscriptAssembler()
             ),
             livePreviewTranscriber: WhisperKitLivePreviewTranscriber(),
-            summaryGenerator: CodexCLISummaryGenerator()
+            codexSummaryGenerator: CodexCLISummaryGenerator(),
+            claudeSummaryGenerator: ClaudeCLISummaryGenerator()
         )
     }
 }

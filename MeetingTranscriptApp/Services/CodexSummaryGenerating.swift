@@ -1,8 +1,33 @@
 import Foundation
 import MeetingTranscriptCore
 
-protocol CodexSummaryGenerating: Sendable {
+protocol SummaryGenerating: Sendable {
     func generateSummary(for document: TranscriptDocument, meetingDirectory: URL) async throws -> String
+}
+
+typealias CodexSummaryGenerating = SummaryGenerating
+
+enum SummaryProvider: Sendable, Equatable, Hashable {
+    case codex
+    case claude
+
+    var actionLabel: String {
+        switch self {
+        case .codex:
+            return "用 Codex 整理摘要"
+        case .claude:
+            return "用 Claude 整理摘要"
+        }
+    }
+
+    var progressLabel: String {
+        switch self {
+        case .codex:
+            return "Codex 整理中..."
+        case .claude:
+            return "Claude 整理中..."
+        }
+    }
 }
 
 struct CodexCommandResult: Sendable {
@@ -12,6 +37,16 @@ struct CodexCommandResult: Sendable {
 
 protocol CodexCommandRunning: Sendable {
     func runCodex(executableURL: URL, arguments: [String], workingDirectory: URL, outputFileURL: URL, prompt: String) async throws -> CodexCommandResult
+}
+
+struct SummaryCommandResult: Sendable {
+    let terminationStatus: Int32
+    let standardOutput: String
+    let standardError: String
+}
+
+protocol SummaryCommandRunning: Sendable {
+    func runSummaryCommand(executableURL: URL, arguments: [String], workingDirectory: URL, prompt: String) async throws -> SummaryCommandResult
 }
 
 enum CodexSummaryError: LocalizedError, Equatable {
@@ -84,7 +119,7 @@ struct CodexCLISummaryGenerator: CodexSummaryGenerating {
             arguments: arguments,
             workingDirectory: workingDirectory,
             outputFileURL: outputFileURL,
-            prompt: try Self.makePrompt(for: document)
+            prompt: try SummaryPromptBuilder.makePrompt(for: document)
         )
 
         guard result.terminationStatus == 0 else {
@@ -99,6 +134,92 @@ struct CodexCLISummaryGenerator: CodexSummaryGenerating {
         return summary
     }
 
+    static func makePrompt(for document: TranscriptDocument) throws -> String {
+        try SummaryPromptBuilder.makePrompt(for: document)
+    }
+}
+
+struct ClaudeCLISummaryGenerator: SummaryGenerating {
+    private static let defaultExecutableURLs = [
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/claude"),
+        URL(fileURLWithPath: "/opt/homebrew/bin/claude"),
+        URL(fileURLWithPath: "/usr/local/bin/claude")
+    ]
+
+    private let executableURLs: [URL]
+    private let commandRunner: any SummaryCommandRunning
+
+    init(
+        executableURLs: [URL] = Self.defaultExecutableURLs,
+        commandRunner: any SummaryCommandRunning = ProcessSummaryCommandRunner()
+    ) {
+        self.executableURLs = executableURLs
+        self.commandRunner = commandRunner
+    }
+
+    init(
+        executableURL: URL,
+        commandRunner: any SummaryCommandRunning = ProcessSummaryCommandRunner()
+    ) {
+        self.init(executableURLs: [executableURL], commandRunner: commandRunner)
+    }
+
+    func generateSummary(for document: TranscriptDocument, meetingDirectory: URL) async throws -> String {
+        let fileManager = FileManager.default
+        guard let executableURL = executableURLs.first(where: { fileManager.fileExists(atPath: $0.path) }) else {
+            throw ClaudeSummaryError.executableMissing(executableURLs.map(\.path).joined(separator: ", "))
+        }
+
+        let workingDirectory = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fileManager.createDirectory(at: workingDirectory, withIntermediateDirectories: false)
+        defer {
+            try? fileManager.removeItem(at: workingDirectory)
+        }
+
+        let result = try await commandRunner.runSummaryCommand(
+            executableURL: executableURL,
+            arguments: [
+                "-p", "--input-format", "text", "--output-format", "text",
+                "--no-session-persistence", "--tools", "", "--disallowedTools", "mcp__*"
+            ],
+            workingDirectory: workingDirectory,
+            prompt: try SummaryPromptBuilder.makePrompt(for: document)
+        )
+
+        guard result.terminationStatus == 0 else {
+            throw ClaudeSummaryError.commandFailed(result.standardError)
+        }
+
+        let summary = result.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !summary.isEmpty else {
+            throw ClaudeSummaryError.emptyOutput
+        }
+        return summary
+    }
+}
+
+enum ClaudeSummaryError: LocalizedError, Equatable {
+    case executableMissing(String)
+    case commandFailed(String)
+    case emptyOutput
+
+    var errorDescription: String? {
+        switch self {
+        case .executableMissing(let checkedPaths):
+            return "Claude CLI was not found. Checked: \(checkedPaths)."
+        case .commandFailed(let standardError):
+            let trimmedError = standardError.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmedError.isEmpty {
+                return "Claude CLI failed."
+            }
+            return "Claude CLI failed: \(trimmedError)"
+        case .emptyOutput:
+            return "Claude CLI returned an empty summary."
+        }
+    }
+}
+
+enum SummaryPromptBuilder {
     static func makePrompt(for document: TranscriptDocument) throws -> String {
         let data = try JSONEncoder.transcriptEncoder.encode(document)
         let json = String(decoding: data, as: UTF8.self)
@@ -122,24 +243,53 @@ struct CodexCLISummaryGenerator: CodexSummaryGenerating {
 }
 
 struct ProcessCodexCommandRunner: CodexCommandRunning {
+    private let summaryCommandRunner: any SummaryCommandRunning
+
+    init(summaryCommandRunner: any SummaryCommandRunning = ProcessSummaryCommandRunner()) {
+        self.summaryCommandRunner = summaryCommandRunner
+    }
+
     func runCodex(executableURL: URL, arguments: [String], workingDirectory: URL, outputFileURL: URL, prompt: String) async throws -> CodexCommandResult {
+        let result = try await summaryCommandRunner.runSummaryCommand(
+            executableURL: executableURL,
+            arguments: arguments,
+            workingDirectory: workingDirectory,
+            prompt: prompt
+        )
+        return CodexCommandResult(
+            terminationStatus: result.terminationStatus,
+            standardError: result.standardError
+        )
+    }
+}
+
+struct ProcessSummaryCommandRunner: SummaryCommandRunning {
+    func runSummaryCommand(executableURL: URL, arguments: [String], workingDirectory: URL, prompt: String) async throws -> SummaryCommandResult {
         let process = Process()
         process.executableURL = executableURL
         process.arguments = arguments
         process.currentDirectoryURL = workingDirectory
 
         let standardInput = Pipe()
+        let standardOutputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("stdout")
         let standardErrorURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension("stderr")
+        FileManager.default.createFile(atPath: standardOutputURL.path, contents: nil)
         FileManager.default.createFile(atPath: standardErrorURL.path, contents: nil)
+        let standardOutput = try FileHandle(forWritingTo: standardOutputURL)
         let standardError = try FileHandle(forWritingTo: standardErrorURL)
         defer {
+            try? standardOutput.close()
             try? standardError.close()
+            try? FileManager.default.removeItem(at: standardOutputURL)
             try? FileManager.default.removeItem(at: standardErrorURL)
         }
 
         process.standardInput = standardInput
+        process.standardOutput = standardOutput
         process.standardError = standardError
 
         let processState = ProcessTerminationState()
@@ -169,10 +319,17 @@ struct ProcessCodexCommandRunner: CodexCommandRunning {
             processState.cancel()
         }
 
+        try standardOutput.close()
         try standardError.close()
+        let outputData = try Data(contentsOf: standardOutputURL)
         let errorData = try Data(contentsOf: standardErrorURL)
+        let outputText = String(decoding: outputData, as: UTF8.self)
         let errorText = String(decoding: errorData, as: UTF8.self)
-        return CodexCommandResult(terminationStatus: terminationStatus, standardError: errorText)
+        return SummaryCommandResult(
+            terminationStatus: terminationStatus,
+            standardOutput: outputText,
+            standardError: errorText
+        )
     }
 }
 

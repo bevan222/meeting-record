@@ -7,28 +7,52 @@ final class MeetingDetailViewModel: ObservableObject {
     @Published var document: TranscriptDocument?
     @Published var errorMessage: String?
     @Published var summaryMarkdown: String?
-    @Published var isGeneratingSummary = false
+    @Published private(set) var activeSummaryProvider: SummaryProvider?
 
     private let repository: FileMeetingRepository
     private let markdownExporter: MarkdownTranscriptExporter
-    private let summaryGenerator: any CodexSummaryGenerating
+    private let codexSummaryGenerator: any SummaryGenerating
+    private let claudeSummaryGenerator: any SummaryGenerating
+    private var summaryTask: Task<String, Error>?
+    private var activeSummaryRequestID: UUID?
 
     init(
         repository: FileMeetingRepository,
         markdownExporter: MarkdownTranscriptExporter,
-        summaryGenerator: any CodexSummaryGenerating
+        codexSummaryGenerator: any SummaryGenerating,
+        claudeSummaryGenerator: any SummaryGenerating
     ) {
         self.repository = repository
         self.markdownExporter = markdownExporter
-        self.summaryGenerator = summaryGenerator
+        self.codexSummaryGenerator = codexSummaryGenerator
+        self.claudeSummaryGenerator = claudeSummaryGenerator
+    }
+
+    convenience init(
+        repository: FileMeetingRepository,
+        markdownExporter: MarkdownTranscriptExporter,
+        summaryGenerator: any SummaryGenerating
+    ) {
+        self.init(
+            repository: repository,
+            markdownExporter: markdownExporter,
+            codexSummaryGenerator: summaryGenerator,
+            claudeSummaryGenerator: summaryGenerator
+        )
     }
 
     var canGenerateSummary: Bool {
         guard let document else { return false }
-        return !document.segments.isEmpty && !isGeneratingSummary
+        return !document.segments.isEmpty && activeSummaryProvider == nil
+    }
+
+    var isGeneratingSummary: Bool {
+        activeSummaryProvider != nil
     }
 
     func load(meetingId: String?) {
+        cancelActiveSummary()
+
         guard let meetingId else {
             document = nil
             errorMessage = nil
@@ -135,32 +159,81 @@ final class MeetingDetailViewModel: ObservableObject {
     }
 
     func generateSummary() async {
-        guard !isGeneratingSummary else { return }
+        await generateSummary(using: .codex)
+    }
+
+    func generateSummary(using provider: SummaryProvider) async {
+        guard activeSummaryProvider == nil else { return }
         guard let document else { return }
         guard !document.segments.isEmpty else {
             errorMessage = "No transcript segments are available for summary."
             return
         }
 
-        isGeneratingSummary = true
-        defer { isGeneratingSummary = false }
-
         let originalMeetingId = document.meeting.id
         guard save(document) else { return }
 
+        let directory: URL
         do {
-            let directory = try repository.meetingDirectory(for: originalMeetingId)
-            let summary = try await summaryGenerator.generateSummary(for: document, meetingDirectory: directory)
+            directory = try repository.meetingDirectory(for: originalMeetingId)
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+
+        let generator: any SummaryGenerating
+        switch provider {
+        case .codex:
+            generator = codexSummaryGenerator
+        case .claude:
+            generator = claudeSummaryGenerator
+        }
+
+        let requestID = UUID()
+        activeSummaryRequestID = requestID
+        activeSummaryProvider = provider
+        let task = Task {
+            let summary = try await generator.generateSummary(for: document, meetingDirectory: directory)
+            try Task.checkCancellation()
+            return summary
+        }
+        summaryTask = task
+        defer {
+            if activeSummaryRequestID == requestID {
+                summaryTask = nil
+                activeSummaryRequestID = nil
+                activeSummaryProvider = nil
+            }
+        }
+
+        do {
+            let summary = try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
+            try Task.checkCancellation()
+            guard self.document?.meeting.id == originalMeetingId else { return }
+
             try repository.saveSummary(summary, meetingId: originalMeetingId)
             guard self.document?.meeting.id == originalMeetingId else { return }
 
             summaryMarkdown = try repository.loadSummary(meetingId: originalMeetingId)
             errorMessage = nil
+        } catch is CancellationError {
+            return
         } catch {
             guard self.document?.meeting.id == originalMeetingId else { return }
 
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func cancelActiveSummary() {
+        summaryTask?.cancel()
+        summaryTask = nil
+        activeSummaryRequestID = nil
+        activeSummaryProvider = nil
     }
 
     @discardableResult

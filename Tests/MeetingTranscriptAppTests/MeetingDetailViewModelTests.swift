@@ -134,6 +134,57 @@ final class MeetingDetailViewModelTests: XCTestCase {
         XCTAssertEqual(generator.requestedDocuments.first?.meeting.title, "TGB SIT API 測試會議")
     }
 
+    func testGenerateSummaryRoutesClaudeRequestOnlyToClaudeGenerator() async throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        try repository.save(Self.sampleDocument())
+        let codex = FakeSummaryGenerator(mode: .success("# Codex 摘要"))
+        let claude = FakeSummaryGenerator(mode: .success("# Claude 摘要"))
+        let viewModel = MeetingDetailViewModel(
+            repository: repository,
+            markdownExporter: MarkdownTranscriptExporter(),
+            codexSummaryGenerator: codex,
+            claudeSummaryGenerator: claude
+        )
+
+        viewModel.load(meetingId: "2026-07-04-1400-tgb-sit")
+        await viewModel.generateSummary(using: .claude)
+
+        XCTAssertEqual(claude.requestedDocuments.count, 1)
+        XCTAssertEqual(codex.requestedDocuments.count, 0)
+        XCTAssertNil(viewModel.activeSummaryProvider)
+        XCTAssertEqual(viewModel.summaryMarkdown, "# Claude 摘要")
+    }
+
+    func testGenerateSummaryRefusesSecondProviderWhileFirstProviderRuns() async throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        try repository.save(Self.sampleDocument())
+        let codex = SuspendedSummaryGenerator()
+        let claude = FakeSummaryGenerator(mode: .success("# Claude 摘要"))
+        let viewModel = MeetingDetailViewModel(
+            repository: repository,
+            markdownExporter: MarkdownTranscriptExporter(),
+            codexSummaryGenerator: codex,
+            claudeSummaryGenerator: claude
+        )
+
+        viewModel.load(meetingId: "2026-07-04-1400-tgb-sit")
+        let task = Task {
+            await viewModel.generateSummary(using: .codex)
+        }
+        await codex.waitUntilRequested()
+        await viewModel.generateSummary(using: .claude)
+
+        XCTAssertEqual(viewModel.activeSummaryProvider, .codex)
+        XCTAssertEqual(claude.requestedDocuments.count, 0)
+
+        codex.resume(with: "# Codex 摘要")
+        await task.value
+
+        XCTAssertNil(viewModel.activeSummaryProvider)
+    }
+
     func testGenerateSummaryFailureKeepsExistingSummary() async throws {
         let root = try Self.makeTemporaryRoot()
         let repository = FileMeetingRepository(rootDirectory: root)
@@ -152,6 +203,33 @@ final class MeetingDetailViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.summaryMarkdown, "# 舊摘要")
         XCTAssertEqual(viewModel.errorMessage, "summary failed")
         XCTAssertFalse(viewModel.isGeneratingSummary)
+    }
+
+    func testCancelledSummaryPreservesExistingSummary() async throws {
+        let root = try Self.makeTemporaryRoot()
+        let repository = FileMeetingRepository(rootDirectory: root)
+        let document = Self.sampleDocument()
+        try repository.save(document)
+        try repository.saveSummary("# 舊摘要", meetingId: document.meeting.id)
+        let generator = SuspendedSummaryGenerator()
+        let viewModel = MeetingDetailViewModel(
+            repository: repository,
+            markdownExporter: MarkdownTranscriptExporter(),
+            summaryGenerator: generator
+        )
+
+        viewModel.load(meetingId: document.meeting.id)
+        let task = Task {
+            await viewModel.generateSummary(using: .codex)
+        }
+        await generator.waitUntilRequested()
+        task.cancel()
+        generator.resume(with: "# 新摘要")
+        await task.value
+
+        XCTAssertEqual(try repository.loadSummary(meetingId: document.meeting.id), "# 舊摘要")
+        XCTAssertEqual(viewModel.summaryMarkdown, "# 舊摘要")
+        XCTAssertNil(viewModel.errorMessage)
     }
 
     func testGenerateSummaryRefusesDocumentWithoutSegments() async throws {
@@ -176,7 +254,7 @@ final class MeetingDetailViewModelTests: XCTestCase {
         XCTAssertTrue(generator.requestedDocuments.isEmpty)
     }
 
-    func testGenerateSummaryDoesNotPublishWhenSelectedMeetingChanges() async throws {
+    func testLoadCancelsSummaryWithoutSavingStaleOutput() async throws {
         let root = try Self.makeTemporaryRoot()
         let repository = FileMeetingRepository(rootDirectory: root)
         let meetingA = Self.sampleDocument(id: "meeting-a", title: "Meeting A")
@@ -200,7 +278,7 @@ final class MeetingDetailViewModelTests: XCTestCase {
         generator.resume(with: "# A 摘要")
         await task.value
 
-        XCTAssertEqual(try repository.loadSummary(meetingId: meetingA.meeting.id), "# A 摘要")
+        XCTAssertNil(try repository.loadSummary(meetingId: meetingA.meeting.id))
         XCTAssertEqual(viewModel.document?.meeting.id, meetingB.meeting.id)
         XCTAssertNil(viewModel.summaryMarkdown)
         XCTAssertNotEqual(viewModel.summaryMarkdown, "# A 摘要")
