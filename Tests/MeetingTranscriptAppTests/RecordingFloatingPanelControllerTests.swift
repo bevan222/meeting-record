@@ -211,6 +211,7 @@ final class RecordingFloatingPanelControllerTests: XCTestCase {
         )
 
         controller.stopRecording()
+        XCTAssertEqual(presenter.hideCount, 1)
         controller.stopRecording()
 
         controller.update(recorderState: .stopping, activeRecordingTitle: "Weekly review", elapsedSeconds: 2)
@@ -221,7 +222,6 @@ final class RecordingFloatingPanelControllerTests: XCTestCase {
         )
 
         XCTAssertEqual(stopCount, 1)
-        XCTAssertEqual(presenter.hideCount, 1)
         XCTAssertEqual(
             presenter.shownSnapshots,
             [
